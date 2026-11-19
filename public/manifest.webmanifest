@@ -1,0 +1,10 @@
+{
+  "name": "ASHA Vaani",
+  "short_name": "ASHA Vaani",
+  "description": "Voice field register for ASHA workers",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f4f1ea",
+  "theme_color": "#0f5c58",
+  "icons": [{ "src": "/assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

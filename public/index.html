@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0f5c58">
+  <meta name="description" content="ASHA Vaani: speak home-visit notes, get a correct visit record, danger-sign alerts and a follow-up list. Built on Gnani Voice AI.">
+  <title>ASHA Vaani</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="/assets/icon.svg" alt="" width="32" height="32">
+      <div>
+        <h1>ASHA Vaani</h1>
+        <p class="sub">AI voice register · <span id="modeBadge" class="badge">…</span></p>
+      </div>
+    </div>
+    <div class="top-right">
+      <label class="sr" for="lang">Language</label>
+      <select id="lang" aria-label="Language">
+        <option value="hi">हिन्दी</option>
+        <option value="en">English</option>
+        <option value="kn">ಕನ್ನಡ</option>
+      </select>
+    </div>
+  </header>
+
+  <div class="synthetic" role="note">Demo uses <b>synthetic beneficiaries only</b>. AI assistant, not a doctor: no diagnosis or treatment advice.</div>
+
+  <main>
+    <section id="tab-visit" class="tab active" aria-label="Visit">
+      <div id="alert" class="alert" hidden role="alert">
+        <div class="alert-title">⚠ <span id="alertTitle">Refer to PHC now</span></div>
+        <div id="alertSigns" class="alert-signs"></div>
+        <div class="alert-actions">
+          <a id="call108" class="btn danger" href="tel:108">📞 108</a>
+          <a id="callPhc" class="btn danger-outline" href="tel:">📞 PHC</a>
+        </div>
+      </div>
+
+      <div class="talk">
+        <button id="mic" class="mic" aria-label="Start">
+          <span class="ring"></span>
+          <svg viewBox="0 0 24 24" width="44" height="44" aria-hidden="true"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2Z"/></svg>
+        </button>
+        <div class="talk-info">
+          <div id="status" class="status">Tap the mic to start</div>
+          <div class="meter"><span id="level"></span></div>
+          <div class="metrics">
+            <span title="Time from the end of your speech to the agent's first audio">⚡ <b id="ttfa">–</b> <small>first audio</small></span>
+            <span title="Median over this session">p50 <b id="ttfaMed">–</b></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="said">
+        <div class="said-row you"><span class="who">You</span><span id="youSaid" class="txt muted">…</span></div>
+        <div class="said-row agent"><span class="who">AI</span><span id="agentSaid" class="txt muted">…</span></div>
+      </div>
+
+      <div class="card visit">
+        <div class="card-head">
+          <h2>Visit record <small id="stateLbl" class="state"></small></h2>
+          <button id="newVisit" class="btn ghost small">New visit</button>
+        </div>
+        <dl id="form" class="fields"></dl>
+        <div class="row-actions">
+          <button id="readback" class="btn">🔊 Read back</button>
+          <button id="saveBtn" class="btn primary">✔ Confirm &amp; save</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="tab-follow" class="tab" aria-label="Follow-ups">
+      <div class="card">
+        <h2>Follow-up list</h2>
+        <p class="hint">Referrals first, then next visits. Say “<i>aaj ki list</i>” to hear it.</p>
+        <ol id="followList" class="list"></ol>
+      </div>
+    </section>
+
+    <section id="tab-records" class="tab" aria-label="Records">
+      <div class="card">
+        <h2>Saved visits <small class="muted">encrypted on this phone</small></h2>
+        <ul id="recordList" class="list"></ul>
+      </div>
+    </section>
+
+    <section id="tab-settings" class="tab" aria-label="Settings">
+      <div class="card">
+        <h2>Settings</h2>
+        <label class="field">Talk mode
+          <select id="talkMode">
+            <option value="handsfree">Hands-free (tap once, just talk)</option>
+            <option value="ptt">Hold to talk (very noisy streets)</option>
+          </select>
+        </label>
+        <label class="field">PHC phone number
+          <input id="phcNumber" inputmode="tel" placeholder="e.g. 0800000000">
+        </label>
+        <label class="field">Keep records for
+          <select id="retention">
+            <option value="1">1 day</option>
+            <option value="7">7 days</option>
+            <option value="30">30 days</option>
+          </select>
+        </label>
+        <button id="wipe" class="btn danger-outline">🗑 Delete all records now</button>
+      </div>
+      <div class="card">
+        <h2>Type a note <small class="muted">for testing without a mic</small></h2>
+        <form id="typeForm" class="type-form">
+          <input id="typeText" placeholder="Sunita Devi 1042 ANC wajan 52 kilo agli visit 3 December" autocomplete="off">
+          <button class="btn primary" type="submit">Send</button>
+        </form>
+      </div>
+      <div class="card about">
+        <h2>Privacy &amp; safety</h2>
+        <ul>
+          <li>The assistant says it is an AI in its first sentence, in your language.</li>
+          <li>Records are encrypted on this phone (AES-256-GCM) and deleted automatically.</li>
+          <li>The server keeps no audio or transcripts. Speech goes to Gnani only to be transcribed.</li>
+          <li>Danger signs come from a fixed list based on MoHFW MCP card, HBNC and IMNCI guidelines. The assistant only says “refer to PHC”, never a diagnosis, medicine or dose.</li>
+          <li>Voices are standard Gnani voices. No voice cloning.</li>
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabs" role="tablist">
+    <button data-tab="visit" class="active" role="tab">🎙<span>Visit</span></button>
+    <button data-tab="follow" role="tab">📋<span>Follow-ups</span><b id="followCount" class="count" hidden></b></button>
+    <button data-tab="records" role="tab">🗂<span>Records</span></button>
+    <button data-tab="settings" role="tab">⚙<span>Settings</span></button>
+  </nav>
+
+  <div id="toast" class="toast" hidden></div>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>

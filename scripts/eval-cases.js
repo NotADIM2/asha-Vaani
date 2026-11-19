@@ -1,0 +1,53 @@
+// Judge-style test utterances: synthetic visit notes in Hindi, Hinglish, English and Kannada,
+// with the fields and danger signs a correct record must contain.
+// Dates are relative to 19 Nov 2026 (eval "today").
+export const EVAL_TODAY = [2026, 10, 19];
+
+export const CASES = [
+  // ---- complete notes ----
+  { lang: 'hi', text: 'सुनीता देवी, आईडी 1042, ए एन सी विज़िट, वज़न 52 किलो, अगली विज़िट 3 दिसंबर', expect: { beneficiaryId: '1042', visitType: 'ANC', weightKg: 52, nextVisit: '2026-12-03' }, dangers: [] },
+  { lang: 'hi', text: 'Sunita Devi ID ek shunya chaar do ANC visit wajan bavan kilo agli visit teen December', expect: { beneficiaryId: '1042', visitType: 'ANC', weightKg: 52, nextVisit: '2026-12-03' }, dangers: [] },
+  { lang: 'hi', text: 'मीना कुमारी का बच्चा, नवजात विज़िट, वज़न दो पॉइंट आठ किलो, अगली विज़िट 21 नवंबर', expect: { beneficiaryId: '1078', visitType: 'HBNC', weightKg: 2.8, nextVisit: '2026-11-21' }, dangers: [] },
+  { lang: 'hi', text: 'फ़ातिमा बेगम, नवजात, बच्चे का वज़न 2800 ग्राम, अगली विज़िट परसों', expect: { beneficiaryId: '1060', visitType: 'HBNC', weightKg: 2.8 }, dangers: [] },
+  { lang: 'hi', text: 'ID 1083 ANC, BP 150 by 100, वज़न 61 किलो', expect: { beneficiaryId: '1083', visitType: 'ANC', weightKg: 61 }, dangers: ['high_bp'] },
+  { lang: 'hi', text: 'प्रिया शर्मा 1051, गर्भवती, तीन महीने, वज़न अड़तालीस किलो, अगली जांच दो हफ्ते बाद', expect: { beneficiaryId: '1051', visitType: 'ANC', weightKg: 48, nextVisit: '2026-12-03' }, dangers: [] },
+  { lang: 'hi', text: 'लक्ष्मी बाई 1057, टीकाकरण, वजन साढ़े चार किलो, पेंटा पहला और ओपीवी पहला लगा दिया, अगली विज़िट 17 दिसंबर', expect: { beneficiaryId: '1057', visitType: 'IMM', weightKg: 4.5, nextVisit: '2026-12-17' }, dangers: [] },
+  { lang: 'hi', text: 'Kavita Yadav 1066 ANC weight 64 kilo, HB 6.5, agli visit 26 November', expect: { beneficiaryId: '1066', visitType: 'ANC', weightKg: 64, nextVisit: '2026-11-26' }, dangers: ['severe_anaemia'] },
+  { lang: 'en', text: 'Anjali Verma, ID 1071, immunisation visit, weight 8.2 kg, next visit on 19 December', expect: { beneficiaryId: '1071', visitType: 'IMM', weightKg: 8.2, nextVisit: '2026-12-19' }, dangers: [] },
+  { lang: 'en', text: 'Rekha Devi 1083, ANC checkup, weight fifty eight kilo, TT second due, next visit in 10 days', expect: { beneficiaryId: '1083', visitType: 'ANC', weightKg: 58, nextVisit: '2026-11-29' }, dangers: [] },
+  { lang: 'en', text: 'Shabnam Khatoon 1090 immunization weight 6 point 4 kilo next visit 2 December', expect: { beneficiaryId: '1090', visitType: 'IMM', weightKg: 6.4, nextVisit: '2026-12-02' }, dangers: [] },
+  { lang: 'kn', text: 'ಗೌರಮ್ಮ ಐಡಿ 1095 ಗರ್ಭಿಣಿ ತೂಕ ಐವತ್ತೆರಡು ಕೆಜಿ ಮುಂದಿನ ಭೇಟಿ ನಾಳೆ', expect: { beneficiaryId: '1095', visitType: 'ANC', weightKg: 52, nextVisit: '2026-11-20' }, dangers: [] },
+  { lang: 'kn', text: 'ಸವಿತಾ 1101 ಲಸಿಕಾ ಭೇಟಿ ತೂಕ 6 ಕೆಜಿ ಮುಂದಿನ ಭೇಟಿ 5 ಡಿಸೆಂಬರ್', expect: { beneficiaryId: '1101', visitType: 'IMM', weightKg: 6, nextVisit: '2026-12-05' }, dangers: [] },
+  { lang: 'hi', text: 'आईडी 1043, नवजात शिशु, वज़न ढाई किलो, अगली विज़िट 27 नवंबर', expect: { beneficiaryId: '1043', visitType: 'HBNC', weightKg: 2.5, nextVisit: '2026-11-27' }, dangers: [] },
+  { lang: 'hi', text: 'Gowramma 1095 pregnant hai, weight 55 kilo hai, next visit agle somvar', expect: { beneficiaryId: '1095', visitType: 'ANC', weightKg: 55, nextVisit: '2026-11-23' }, dangers: [] },
+  { lang: 'hi', text: 'बच्चे का वज़न एक किलो सात सौ ग्राम, नवजात, आईडी 1060', expect: { beneficiaryId: '1060', visitType: 'HBNC', weightKg: 1.7 }, dangers: ['very_low_birth_weight'] },
+  // ---- danger signs (code-mixed, noisy phrasing) ----
+  { lang: 'hi', text: 'रेखा देवी 1083, सातवाँ महीना, खून आ रहा है थोड़ा', expect: { beneficiaryId: '1083' }, dangers: ['bleeding'] },
+  { lang: 'hi', text: 'pregnancy mein bleeding ho rahi hai kal se', expect: {}, dangers: ['bleeding'] },
+  { lang: 'hi', text: 'बच्चे को तेज़ बुखार है, नवजात, फ़ातिमा', expect: { visitType: 'HBNC' }, dangers: ['fever'] },
+  { lang: 'hi', text: 'newborn ka temperature 101 degree hai', expect: { visitType: 'HBNC' }, dangers: ['fever'] },
+  { lang: 'hi', text: 'बच्चा दूध नहीं पी रहा, सुस्त है', expect: {}, dangers: ['not_feeding', 'lethargy'] },
+  { lang: 'hi', text: 'baby ki saans tez chal rahi hai, 68 per minute, navjat', expect: { visitType: 'HBNC' }, dangers: ['breathing_difficulty'] },
+  { lang: 'hi', text: 'मरीज़ को झटके आ रहे हैं', expect: {}, dangers: ['convulsions'] },
+  { lang: 'hi', text: 'सिर में बहुत तेज़ दर्द है और धुंधला दिखता है', expect: {}, dangers: ['severe_headache_vision'] },
+  { lang: 'hi', text: 'चेहरे पर सूजन है और पैरों में भी', expect: {}, dangers: ['swelling'] },
+  { lang: 'hi', text: 'पेट में बच्चे की हलचल कम हो गई है', expect: {}, dangers: ['reduced_fetal_movement'] },
+  { lang: 'hi', text: 'पानी की थैली फट गई, पानी जा रहा है', expect: {}, dangers: ['water_leak'] },
+  { lang: 'hi', text: 'bachche ki hatheli aur talve peele hain', expect: {}, dangers: ['jaundice'] },
+  { lang: 'hi', text: 'naal mein pus hai aur laal ho gayi hai', expect: {}, dangers: ['umbilical_infection'] },
+  { lang: 'hi', text: 'बच्चा बहुत ठंडा है', expect: {}, dangers: ['hypothermia'] },
+  { lang: 'hi', text: 'bleeding ruk nahi rahi', expect: {}, dangers: ['bleeding'] },
+  { lang: 'hi', text: 'bukhar nahi utar raha', expect: {}, dangers: ['fever'] },
+  { lang: 'hi', text: 'pet mein tez dard hai', expect: {}, dangers: ['severe_abdominal_pain'] },
+  { lang: 'en', text: 'she has heavy bleeding after delivery and foul smelling discharge', expect: {}, dangers: ['bleeding', 'foul_discharge'] },
+  { lang: 'en', text: 'the baby had fits this morning and is not feeding', expect: {}, dangers: ['convulsions', 'not_feeding'] },
+  { lang: 'kn', text: 'ಮಗುವಿಗೆ ಜ್ವರ ಇದೆ ಮತ್ತು ಹಾಲು ಕುಡಿಯುತ್ತಿಲ್ಲ', expect: {}, dangers: ['fever', 'not_feeding'] },
+  { lang: 'kn', text: 'ರಕ್ತಸ್ರಾವ ಆಗುತ್ತಿದೆ', expect: {}, dangers: ['bleeding'] },
+  // ---- negations / look-alikes that must NOT flag ----
+  { lang: 'hi', text: 'bleeding nahi hai, bukhar bhi nahi hai', expect: {}, dangers: [] },
+  { lang: 'hi', text: 'कोई खतरे का लक्षण नहीं, बच्चा ठीक से दूध पी रहा है', expect: {}, dangers: [] },
+  { lang: 'hi', text: 'khoon ki kami thodi hai, HB 9', expect: {}, dangers: [] },
+  { lang: 'hi', text: 'खून की जांच हो गई', expect: {}, dangers: [] },
+  { lang: 'en', text: 'no swelling, no headache, baby is fit and fine', expect: {}, dangers: [] },
+  { lang: 'hi', text: 'IFA ki 30 goli di aur TT pehla laga diya', expect: {}, dangers: [] },
+];

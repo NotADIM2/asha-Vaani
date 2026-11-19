@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: asha-vaani
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: GNANI_API_KEY
+        sync: false
+      - key: NODE_VERSION
+        value: "22"
