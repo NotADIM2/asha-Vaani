@@ -5,3 +5,4 @@ node_modules/
 *.log
 eval-out/
 .DS_Store
+usage.json

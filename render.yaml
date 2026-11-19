@@ -9,5 +9,9 @@ services:
     envVars:
       - key: GNANI_API_KEY
         sync: false
+      - key: ACCESS_CODE
+        sync: false
+      - key: HOST
+        value: 0.0.0.0
       - key: NODE_VERSION
         value: "22"

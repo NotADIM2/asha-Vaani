@@ -32,6 +32,20 @@ let mic = null;
 let vad = null;
 let player = null;
 let running = false;
+// Silence never needs to reach Gnani: after this long without speech the mic pauses
+// (no audio is streamed, no credits used) until the mic button is tapped again.
+const IDLE_PAUSE_MS = 60_000;
+let paused = false;
+let lastActivity = 0;
+
+// Access code: opened once as /?code=..., then remembered and hidden from the address bar.
+let accessCode = '';
+try {
+  const fromUrl = new URLSearchParams(location.search).get('code');
+  if (fromUrl) { localStorage.setItem('accessCode', fromUrl); history.replaceState(null, '', location.pathname); }
+  accessCode = localStorage.getItem('accessCode') || '';
+} catch { /* storage blocked: no code */ }
+const codeQuery = accessCode ? `?code=${encodeURIComponent(accessCode)}` : '';
 let pttDown = false;
 let sayId = 1;
 let speakingText = '';
@@ -111,6 +125,10 @@ function renderForm(changed = []) {
   }
 }
 
+function phoneOnly(s) {
+  return String(s).replace(/[^\d+]/g, '').slice(0, 15);
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -122,7 +140,7 @@ async function refreshLists() {
   const refers = fu.filter((x) => x.refer).length;
   $('followCount').hidden = !refers;
   $('followCount').textContent = refers;
-  $('recordList').innerHTML = records.length ? records.map((r) => `<li><div class="li-top"><span>${escapeHtml(r.name || '—')}</span><span class="muted">${escapeHtml(fmtDate(r.visitDate))}</span></div><div class="li-sub">${escapeHtml(VISIT_LABEL[r.visitType] || '')} · ${r.weightKg ?? '–'} kg${r.referToPHC ? ' · <b style="color:var(--danger)">referred</b>' : ''}</div><details><summary>Full record</summary><pre>${escapeHtml(JSON.stringify(r, null, 2))}</pre></details></li>`).join('') : '<li class="empty-note">No saved visits.</li>';
+  $('recordList').innerHTML = records.length ? records.map((r) => `<li><div class="li-top"><span>${escapeHtml(r.name || '—')}</span><span class="muted">${escapeHtml(fmtDate(r.visitDate))}</span></div><div class="li-sub">${escapeHtml(VISIT_LABEL[r.visitType] || '')} · ${escapeHtml(r.weightKg ?? '–')} kg${r.referToPHC ? ' · <b class="referred">referred</b>' : ''}</div><details><summary>Full record</summary><pre>${escapeHtml(JSON.stringify(r, null, 2))}</pre></details></li>`).join('') : '<li class="empty-note">No saved visits.</li>';
 }
 
 // ---------------- speaking ----------------
@@ -207,7 +225,7 @@ function isEcho(text) {
 async function llmAssist(text) {
   if (!config.llm) return;
   try {
-    const res = await fetch('/api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text, lang }) });
+    const res = await fetch('/api/extract', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Access-Code': accessCode }, body: JSON.stringify({ text, lang }) });
     if (!res.ok) return;
     const x = await res.json();
     // Only accept numbers that were actually spoken.
@@ -260,7 +278,7 @@ async function onTranscript(text, meta = {}) {
 function connect() {
   return new Promise((resolve) => {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws = new WebSocket(`${proto}://${location.host}/ws${codeQuery}`);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
       ws.send(JSON.stringify({ type: 'start', lang, keyterms: [...registryKeyterms(registry), ...HEALTH_TERMS] }));
@@ -307,7 +325,11 @@ function connect() {
           player?.finish(m.id);
           break;
         }
-        case 'tts_error': caching.delete(m.id); toast(`Voice output failed: ${m.message}`); break;
+        case 'tts_error':
+          caching.delete(m.id);
+          if (m.message === 'rate limited') { goFree(); speak(speakingText); } else toast(`Voice output failed: ${m.message}`);
+          break;
+        case 'budget': goFree(); break;
         default:
       }
     };
@@ -341,14 +363,40 @@ function startBrowserStt() {
 function onFrame({ pcm, rms }) {
   $('level').style.width = `${Math.min(100, Math.round(rms * 900))}%`;
   vad.push(rms, player?.playing || false);
-  if (!config.gnani || ws?.readyState !== 1) return;
+  if (!config.gnani || ws?.readyState !== 1 || paused) return;
   if (talkMode === 'ptt' && !pttDown) return;
+  const now = performance.now();
+  if (vad.speaking || player?.playing || pttDown) lastActivity = now;
+  else if (talkMode === 'handsfree' && now - lastActivity > IDLE_PAUSE_MS) {
+    paused = true;
+    setStatus('idle');
+    toast('Mic paused after 1 minute of silence (saves credits). Tap the mic to continue.');
+    return;
+  }
   ws.send(pcm);
+}
+
+// Daily credit cap reached (or access lost): carry on with the browser's free voice.
+function goFree() {
+  if (!config.gnani) return;
+  config.gnani = false;
+  config.llm = false;
+  setBadge();
+  toast('Gnani daily limit reached. Switched to the free browser voice.');
+  try { ws?.close(); } catch { /* already closed */ }
+  if (running) startBrowserStt();
+}
+
+function setBadge() {
+  const badge = $('modeBadge');
+  badge.textContent = config.gnani ? 'Gnani live' : 'browser speech';
+  badge.className = `badge ${config.gnani ? 'live' : 'fallback'}`;
 }
 
 async function start() {
   if (running) return;
   running = true;
+  lastActivity = performance.now();
   ctx = new (window.AudioContext || window.webkitAudioContext)();
   await ctx.resume();
   player = new Player(ctx, config.ttsSampleRate || 24000);
@@ -399,22 +447,24 @@ function setLang(l, announce = true) {
 
 // ---------------- wiring ----------------
 async function init() {
-  try { config = await (await fetch('/api/config')).json(); } catch { /* offline: browser fallback */ }
-  const badge = $('modeBadge');
-  badge.textContent = config.gnani ? 'Gnani live' : 'browser speech';
-  badge.className = `badge ${config.gnani ? 'live' : 'fallback'}`;
+  try { config = await (await fetch(`/api/config${codeQuery}`)).json(); } catch { /* offline: browser fallback */ }
+  setBadge();
   $('lang').value = lang;
   document.documentElement.lang = lang;
   $('talkMode').value = talkMode;
   $('phcNumber').value = pref.get('phc', '');
-  $('callPhc').href = `tel:${pref.get('phc', '')}`;
+  $('callPhc').href = `tel:${phoneOnly(pref.get('phc', ''))}`;
   $('retention').value = pref.get('retentionDays', '7');
   renderForm();
   refreshLists();
   setStatus('idle');
 
   const micBtn = $('mic');
-  micBtn.addEventListener('click', () => { if (!running) start(); else if (player?.playing || window.speechSynthesis?.speaking) stopSpeaking(); });
+  micBtn.addEventListener('click', () => {
+    if (!running) start();
+    else if (paused) { paused = false; lastActivity = performance.now(); setStatus('listening'); }
+    else if (player?.playing || window.speechSynthesis?.speaking) stopSpeaking();
+  });
   micBtn.addEventListener('pointerdown', () => { if (running && talkMode === 'ptt') { pttDown = true; stopSpeaking(); setStatus('listening'); } });
   const release = () => {
     if (talkMode === 'ptt' && pttDown) {
@@ -428,7 +478,7 @@ async function init() {
 
   $('lang').addEventListener('change', (e) => setLang(e.target.value));
   $('talkMode').addEventListener('change', (e) => { talkMode = e.target.value; pref.set('talkMode', talkMode); setStatus(running ? 'listening' : 'idle'); });
-  $('phcNumber').addEventListener('change', (e) => { pref.set('phc', e.target.value.trim()); $('callPhc').href = `tel:${e.target.value.trim()}`; });
+  $('phcNumber').addEventListener('change', (e) => { const n = phoneOnly(e.target.value); e.target.value = n; pref.set('phc', n); $('callPhc').href = `tel:${n}`; });
   $('retention').addEventListener('change', (e) => pref.set('retentionDays', e.target.value));
   $('wipe').addEventListener('click', async () => {
     if (!confirm('Delete all saved visit records from this phone?')) return;
