@@ -4,23 +4,29 @@
 
 **▶ Live app:** _deployed link here_ · **🎬 Demo video (2½ min):** _video link here_
 
-An ASHA worker walks out of a house and *speaks* her visit notes in Hindi, English or Kannada, mixed however she naturally
-talks. Before she reaches the next house she has:
+An ASHA worker walks out of a house and *speaks* her visit notes in any of the ten languages Gnani supports (Hindi, Marathi, Bengali,
+Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam, English), mixed with English however she naturally talks. Before she reaches the next house she has:
 
 1. **A correct visit record**: beneficiary ID and name, visit type, weight, vitals, vaccines given and **vaccines due**
    (worked out from the national schedule), and the next visit date.
 2. **The record read back aloud**, which she fixes by voice ("नहीं, वज़न 2.8 किलो").
 3. **An immediate spoken danger-sign alert** in her language ("refer to the PHC now"), with the record flagged and one-tap
    108 / PHC call buttons.
-4. **A follow-up list**: referrals first, then upcoming visits. She can ask "aaj ki list".
+4. **A follow-up list**: referrals first, then overdue, today, the next 7 days and later. She can ask "aaj ki list".
+5. **Saved visits she can reopen and correct**, and an unfinished visit that survives a reload.
 
-No typing. The app runs in the phone's browser and can be installed as a PWA on a low-end Android phone.
+No typing needed (a type box is there for when there is no internet). The app runs in the phone's browser and can be
+installed as a PWA on a low-end Android phone.
+
+> **Prototype.** ASHA Vaani is a hackathon prototype that uses invented demo people. It is not an official health record,
+> does not replace the MCP card, the RCH register or ANMOL, and is not connected to any government system. See
+> [Prototype status and limitations](#prototype-status-and-limitations).
 
 ```
 "सुनीता देवी, आईडी 1042, ए एन सी, वज़न 52 किलो, अगली विज़िट 3 दिसंबर"
 → "पढ़कर सुनाती हूँ। सुनीता देवी, आईडी एक शून्य चार दो। ए एन सी विज़िट। वज़न बावन किलो।
    बाकी टीके: टी डी दूसरा। अगली विज़िट तीन दिसंबर। क्या सब सही है?"
-"हाँ" → saved (encrypted on the phone) → follow-up list updated
+"हाँ" → saved on this phone (encrypted; not synced anywhere) → follow-up list updated
 ```
 
 ---
@@ -68,8 +74,8 @@ Synthetic register (all invented): `1042` Sunita Devi (ANC), `1043` Sunita Kumar
 
 | Service | Model | Endpoint | What it does in ASHA Vaani |
 |---|---|---|---|
-| **Speech-to-Text, realtime streaming** | Prisma v3.0 | `wss://api.vachana.ai/stt/v3/stream` | Live transcription of the ASHA's notes. Code-mix languages `hi-IN,en-IN` / `kn-IN,en-IN`, `format=transcribe` so numbers come back as digits, **keyterms** (register names + health words like "TT injection", "IFA goli", "ANC"), a `topic` hint, VAD tuned for household and street noise, and `commit` for fast endpointing on short answers |
-| **Text-to-Speech, realtime streaming** | Timbre v3.0 (voice Sunaina, recommended for Hindi, English and Kannada) | `wss://api.vachana.ai/api/v1/tts` | Speaks every reply: greeting with AI disclosure, questions, read-back, danger alerts. Raw 24 kHz PCM is streamed and played chunk by chunk. A pool of pre-opened sockets removes handshake delay |
+| **Speech-to-Text, realtime streaming** | Prisma v3.0 | `wss://api.vachana.ai/stt/v3/stream` | Live transcription of the ASHA's notes. One locale per stream for whichever of the ten languages is selected (Prisma still writes the English words inside it, and follows her if she switches), `format=transcribe` so numbers come back as digits, **keyterms** (register names + health words like "TT injection", "IFA goli", "ANC"), a `topic` hint, VAD tuned for household and street noise, and `commit` for fast endpointing on short answers |
+| **Text-to-Speech, realtime streaming** | Timbre v3.0 (voice Sunaina in all ten languages) | `wss://api.vachana.ai/api/v1/tts` | Speaks every reply: greeting with AI disclosure, questions, read-back, danger alerts. Raw 24 kHz PCM is streamed and played chunk by chunk. A pool of pre-opened sockets removes handshake delay |
 | **LLM, Chat Completions (JSON output)** | Evon v3.5 | `https://api.vachana.ai/v1/chat/completions` | Optional backup extractor for sentences the rule parser couldn't understand. JSON only. It fills empty fields or adds danger flags, and can never overwrite or speak |
 
 All three calls are made from the server (`server/gnani.js`) with the `X-API-Key-ID` header read from `.env`. The key never reaches the browser.
@@ -135,15 +141,18 @@ Same flow in plain text:
 | **Time to first audio** | Understanding is deterministic and runs in under 1 ms. TTS sockets are pre-opened so there is no handshake per reply. Fixed prompts are synthesised once and cached for instant replay. The live ⚡ badge shows the measured end-of-speech → first-audio time and its median. |
 | **Barge-in** | A local VAD on the phone detects her voice over the agent (higher threshold while the agent talks, so echo isn't mistaken for her). Playback stops instantly and the server TTS stream is cancelled. Prisma's `speech_start` also ducks the agent's volume. Transcripts that repeat the agent's own words are dropped as echo. |
 | **Endpointing** | Dictation uses Prisma VAD with a 700 ms silence so "wajan… 52 kilo" stays one phrase. For short answers (yes/no, a number, a date) the client sends `commit` after 350 ms of local silence. Hold-to-talk mode commits on release. A follow-up question waits 450 ms in case she keeps talking. |
-| **Code-mix** | Prisma v3.0 with `hi-IN,en-IN` (or `kn-IN,en-IN`). The parser romanises every Indic script with one table (the Unicode Brahmic blocks share a layout), then matches on phonetic keys, so "वज़न", "wajan" and "vajan" are the same word. |
+| **Code-mix** | Ten languages, each mixed with English. The parser romanises every Indic script with one table (the Unicode Brahmic blocks share a layout), then matches on phonetic keys, so "वज़न", "wajan" and "vajan" are the same word. Words in a regional script match only that script, so Malayalam "പനി" (fever) never fires on Hindi "पानी" (water). Negation is handled as each language does it: "बुखार नहीं", "জ্বর নেই", and the Dravidian glued forms "പനിയില്ല", "ಜ್ವರವಿಲ್ಲ", "జ్వరం రాలేదు", "காய்ச்சல் வரவில்லை". "Not stopping" ("रक्त थांबत नाही", "இரத்தம் நிற்கவில்லை") keeps the sign, and a "not" in the next clause ("बुखार है, दूध नहीं पी रहा") does not cancel it. |
 | **Noise** | Browser noise suppression and echo cancellation, a stricter Prisma VAD (`threshold 0.6`, `min-speech 200 ms`, `min-segment 200 ms`), keyterm biasing for names and health words ("TT injection", "IFA goli", "ANC checkup"), and hold-to-talk for very loud streets. |
 | **Names and numbers** | Spoken numbers in Hindi, English and Kannada: "बावन", "teen sau chaalis", "do point aath", "dhai", "sava", "saadhe", "ek zero chaar do" (read as a digit string for IDs), "ippattondu", grams↔kg. IDs are read back digit by digit. Register names are fuzzy-matched, and same-name collisions are asked about, never guessed. |
 
 ### Fit for the target user
 
-- One big button, then hands-free. No typing, large text, high contrast, works in sunlight, dark mode for night visits.
-- Runs in Chrome on any Android phone and installs as a PWA. The app shell works offline.
-- Speaks Hindi, English and Kannada, and switches automatically when two utterances in a row come in another language.
+- Visit-first start screen: *Pregnancy visit*, *Newborn visit* or *Other visit*, then hands-free. Plain light theme, large
+  text and 44 px+ touch targets; red is used only for danger alerts.
+- Runs in Chrome on any Android phone and installs as a PWA. **Offline:** the app opens, and a typed note is parsed
+  and saved on the phone exactly like a spoken one. Voice needs internet. The header shows Online/Offline as the browser
+  reports it.
+- Speaks all ten Gnani languages. If she starts talking in Tamil, Telugu, Bengali or another regional script, the reply comes back in that language from the first sentence (Prisma tags the language). Hindi/English/Marathi switches wait for a second sentence so Hinglish doesn't flip it.
 - Asks for only what's missing ("वज़न कितना है?"). It proposes the next visit date from the protocol and she just says "हाँ".
 - Vaccines due are calculated from the National Immunization Schedule using the child's age or the pregnancy, so she doesn't have to remember the schedule.
 
@@ -153,8 +162,8 @@ Same flow in plain text:
 
 | Baseline rule | Implementation |
 |---|---|
-| **AI disclosure** in the first turn, in her language | Every greeting starts "मैं … एक ए आई सहायक हूँ, इंसान नहीं" / "I am … an A I assistant, not a human" / Kannada equivalent. Covered by a test. |
-| **Synthetic or consented data only** | The register is invented (`public/js/nlu/registry.js`). The UI shows a "synthetic beneficiaries only" banner. |
+| **AI disclosure** in the first turn, in her language | Every greeting starts "मैं … एक ए आई सहायक हूँ, इंसान नहीं" / "I am … an A I assistant, not a human", and the same in each of the ten languages. Covered by a test. |
+| **Synthetic or consented data only** | The register is invented (`public/js/nlu/registry.js`). The start screen carries a "Prototype, demo data only" notice saying not to use real patients. |
 | **DPDP: encrypted at rest, deleted after judging** | Records are encrypted on the phone with AES-256-GCM (non-extractable WebCrypto key) and deleted automatically after 1 / 7 / 30 days, plus a "Delete all" button. The server stores and logs **no** audio or transcripts. |
 | **Health: no diagnosis, treatment or dosage** | Every spoken sentence comes from fixed templates (`public/js/i18n.js`); nothing is generated freely. Medicine and treatment questions get a fixed refusal. Danger signs follow a fixed, cited list (see [DANGER_SIGNS.md](DANGER_SIGNS.md)) and the only action is "refer to PHC". The LLM can only return JSON fields, which are checked against the transcript and can only fill empty fields or add flags. |
 | **Secrets** | The API key is read from `.env` (git-ignored) on the server and never reaches the browser. |
@@ -162,23 +171,75 @@ Same flow in plain text:
 
 ---
 
+## Visit workflow and storage
+
+| Step | What happens | Code |
+|---|---|---|
+| Start | *Pregnancy visit* (ANC) or *Newborn visit* (HBNC) fixes the visit type; *Other* lets her say it | `agent.startVisit` |
+| Fill | Voice or the type box; the card lists what is still needed before saving | `agent.missing` |
+| Save | Only after the read-back and her "yes". The app says "saved" only after IndexedDB has committed the write; if the write fails the visit stays on screen, she hears that it was not saved, and "yes" retries | `store.saveRecord`, `app.js:onTranscript` |
+| Unfinished | The visit in progress is kept as an encrypted draft and offered again after a reload | `store.saveDraft`, `agent.restore` |
+| View / correct | Records tab → open a visit → *Correct this visit*. Saving replaces the same record (same ID and visit date) | `agent.edit` |
+| Follow-up | From each person's latest visit; grouped Referral advised / Overdue / Today / Next 7 days / Later, with one shared `dueStatus`. A referral keeps the date it was advised | `store.followupsFrom` |
+| Summary | Counts on this phone only: visits by type, referrals advised, overdue, due in 7 days. No names, no ranking, no location | `store.summarize` |
+
+**Sync:** there is none. Records live only in this browser on this phone, encrypted, and are deleted after the retention
+period set in Settings (1 / 7 / 30 days). Every record says "Stored on this phone only… Not synced" and its delete date.
+Nothing is backed up.
+
+---
+
+## Prototype status and limitations
+
+- **Not an official record.** It does not replace the MCP card, the RCH register, ANMOL or any state system, and it has
+  no integration with any of them. None is planned without the relevant specification and authorisation.
+- **Demo fields.** The field set (weight, BP, Hb, temperature, breaths, vaccines, next visit, danger signs) is a demo set
+  and has not been checked against any state's official forms.
+- **Demo data.** The register is invented. A new name or ID can be spoken, so the notice asks for demo people only.
+- **No login and no sync.** Anyone who can open the browser on the phone can see its records. Records are encrypted at
+  rest, but the key is in the same browser.
+- **Retention deletes data.** Records are removed after the chosen period. This suits a demo, not a real register.
+- **Danger signs and schedules** come from cited MoHFW material ([DANGER_SIGNS.md](DANGER_SIGNS.md),
+  `public/js/nlu/schedule.js`). The only action is "refer to PHC". The list, thresholds, vaccine timings and suggested
+  next-visit dates have **not** been validated by ASHAs, ANMs or a health authority.
+- **Saving needs every core field** (person, visit type, weight, vaccines due, next visit). A visit with one of these
+  unknown stays as an unfinished draft.
+- **Translation.** Spoken replies exist in all ten languages. Screen text is centralised in `public/js/i18n.js`
+  (`SCREEN`): English and Hindi are done, and the other eight fall back to English. Visit type labels and the units on
+  the cards are English.
+- **Voice needs internet** (Gnani, or the browser's own recognition). Offline, only typing works.
+
+Before any real use, the following needs review with ASHAs, ANMs and the district or state health authority: the field
+set, the danger-sign list and thresholds, the follow-up rules, whether the records may be kept on a phone and for how
+long, consent, and a real authentication and sync design.
+
+---
+
 ## Accuracy
 
-`npm run eval:text` scores the understanding layer on 43 judge-style notes (Hindi, Hinglish, English, Kannada; complete
-notes, danger signs, negations and look-alikes such as "khoon ki kami" and "baby is fit"):
+`npm run eval:text` scores the understanding layer on 78 judge-style notes in all ten languages plus Hinglish (complete
+notes, danger signs, negations and look-alikes such as "khoon ki kami", "baby is fit", "இரத்த அழுத்தம்" (blood pressure)
+and "ਖੂਨ ਦੀ ਜਾਂਚ" (blood test)):
 
 ```
-field accuracy:      65/65 (100.0%)
-danger-sign recall:  28/28 (100.0%)
+field accuracy:      121/121 (100.0%)
+danger-sign recall:  57/57 (100.0%)
 false flags:         0
 ```
 
 This is our own test set, so treat it as a regression guard, not an independent benchmark.
 `npm run eval:audio -- 10` runs the same notes end to end through Timbre v3.0 TTS (different voices from the app's), street-like noise at 10 dB SNR and Prisma
-streaming STT, and reports the same scores plus STT latency.
+streaming STT, and reports the same scores plus STT latency. `npm run eval:audio -- 10 99 babble regional` does the same for
+the seven newer languages with room babble at 10 dB SNR: on the first run, fields 48/56, danger signs 22/29, 0 false flags,
+STT p50 141 ms (replaying those same transcripts after the cross-script fix below gives 50/56 and 24/29). The misses that remain are transcription errors
+(a wrong digit, a dropped phrase), which the agent recovers from by asking for the missing field. Prisma sometimes writes
+Bengali or Gujarati in Devanagari and Punjabi in Latin, so while the worker speaks a regional language her words are matched
+in any script.
 
 `npm test` runs the dialogue tests: full visit, voice correction, barge-in-style correction, same-name disambiguation,
-danger escalation, negation, refusal, Kannada flow, vaccine schedule and follow-ups.
+danger escalation, negation, refusal, vaccine schedule and follow-ups, plus a full dictate → read-back → "yes" → save
+flow in each language (`test/languages.test.js`), and the workflow pieces: editing in place, drafts, follow-up dates,
+referral dating and the counts-only summary (`test/workflow.test.js`).
 
 ---
 
@@ -199,9 +260,10 @@ server/gnani.js        Prisma STT stream, Timbre TTS socket pool, Evon JSON extr
 public/js/app.js       mic → STT → agent → TTS loop, barge-in, endpointing, latency meter, UI
 public/js/audio.js     mic capture, energy VAD, streaming PCM player
 public/js/agent.js     dialogue state machine: dictate → ask → read back → confirm/correct → save
-public/js/i18n.js      every sentence the agent can say (hi / en / kn)
-public/js/store.js     AES-GCM encrypted IndexedDB records, follow-up list
-public/js/nlu/         translit (all Indic scripts), numbers, dates, fields, danger signs, schedules, register
+public/js/i18n.js      every sentence the agent can say, in all ten languages
+public/js/store.js     AES-GCM encrypted IndexedDB records and draft, follow-up list, due status, summary
+public/js/nlu/         translit (all Indic scripts), numbers, dates, fields, danger signs, schedules, register;
+                       regional.js holds the Marathi/Tamil/Telugu/Bengali/Gujarati/Malayalam/Punjabi vocabulary
 scripts/               text and noisy-audio evaluations
 test/                  dialogue tests (node:test)
 ```

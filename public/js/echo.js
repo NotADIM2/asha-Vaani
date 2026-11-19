@@ -21,6 +21,13 @@ function letterKey(ch) {
   return letterKeys[ch.toUpperCase()];
 }
 const isAcronym = (w) => /^[A-Z]{2,4}$/.test(w) || /^(Td|Hb|Rs)$/.test(w);
+// Field words the agent says in its own script but STT often writes in English ("ஐடி" -> "ID").
+const ALIAS = {
+  '@id': ['ID', 'Id', 'आईडी', 'आयडी', 'ஐடி', 'ఐడి', 'ఐడీ', 'আইডি', 'આઈડી', 'ഐഡി', 'ਆਈਡੀ', 'ಐಡಿ'],
+  '@bp': ['BP', 'बीपी', 'பிபி', 'బీపీ', 'বিপি', 'બીપી', 'ബിപി', 'ਬੀਪੀ', 'ಬಿಪಿ'],
+  '@hb': ['HB', 'Hb', 'एचबी', 'ஹெச்பி', 'హెచ్‌బి', 'এইচবি', 'એચબી', 'എച്ച്ബി', 'ਐਚਬੀ', 'ಎಚ್‌ಬಿ'],
+};
+const ALIAS_OF = new Map(Object.entries(ALIAS).flatMap(([k, ws]) => ws.map((w) => [w.normalize('NFC'), k])));
 
 // Ordinals: the agent says "दूसरा", STT may write "2nd".
 const ORDINAL = { pahala: 1, pahali: 1, pehla: 1, first: 1, modala: 1, dusara: 2, dusari: 2, doosra: 2, second: 2, eradane: 2, tisara: 3, tisari: 3, teesra: 3, tird: 3, third: 3, muurane: 3, chautha: 4, cautha: 4, fourth: 4 };
@@ -31,6 +38,10 @@ const UNIT = { kilo: 'kg', kg: 'kg', kilogram: 'kg', kilogrem: 'kg', gram: 'g', 
 // Words the worker uses to cut in. Heard alone while the agent talks they still count,
 // unless the agent itself just said them.
 const BARGE_WORDS = new Set(['nahi', 'nahin', 'na', 'ruko', 'ruk', 'ruki', 'stop', 'bas', 'wait', 'galat', 'no', 'illa', 'beda', 'nillisi', 'ek', 'minat']);
+// "no / stop / wrong" in Marathi, Tamil, Telugu, Bengali, Gujarati, Malayalam, Punjabi
+for (const w of ['थांबा', 'चूक', 'இல்லை', 'நிறுத்து', 'தப்பு', 'வேண்டாம்', 'లేదు', 'ఆపు', 'ఆగండి', 'తప్పు', 'కాదు', 'থামো', 'থামুন', 'ভুল', 'না', 'ના', 'નહીં', 'થોભો', 'ખોટું', 'ഇല്ല', 'നിർത്ത്', 'നിൽക്ക്', 'തെറ്റ്', 'അല്ല', 'ਨਹੀਂ', 'ਰੁਕੋ', 'ਗਲਤ']) {
+  for (const t of tokenize(w)) BARGE_WORDS.add(t.key);
+}
 
 function lev(a, b) {
   if (Math.abs(a.length - b.length) > 1) return 2;
@@ -58,7 +69,9 @@ export function units(text) {
   const words = String(text || '').split(/\s+/).filter(Boolean);
   const toks = [];
   words.forEach((w, wi) => {
-    const bare = w.replace(/[^\p{L}\p{N}]/gu, '');
+    const bare = w.replace(/[^\p{L}\p{M}\p{N}]/gu, ''); // \p{M}: keep Indic vowel signs
+    const alias = ALIAS_OF.get(bare.normalize('NFC'));
+    if (alias) { toks.push({ key: alias, rom: bare, wi, letter: true }); return; }
     if (isAcronym(bare)) { for (const ch of bare) toks.push({ key: letterKey(ch), rom: ch, wi, letter: true }); return; }
     for (const t of tokenize(w)) if (t.key) toks.push({ ...t, wi });
   });

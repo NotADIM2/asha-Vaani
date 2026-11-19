@@ -59,12 +59,74 @@ export class VisitAgent {
   }
 
   reset() {
+    this.editing = null; // { visitDate, savedAt } of a saved record being corrected
     this.form = newForm();
     this.state = 'dictate'; // dictate | ask | disambiguate | confirm
     this.expect = null;
     this.pendingMatches = null;
     this.pendingWeight = null;
     this.lastPrompt = null;
+  }
+
+  // Start a visit of a chosen kind (pregnancy / newborn buttons), optionally for a known person.
+  startVisit(visitType = null, person = null) {
+    this.reset();
+    if (visitType) { this.form.visitType = visitType; this.form.visitTypeInferred = false; }
+    if (person) {
+      const b = person.beneficiaryId && this.registry.find((p) => p.id === person.beneficiaryId);
+      if (b) {
+        const keep = this.form.visitType;
+        this.setBeneficiary(b, []);
+        if (keep) { this.form.visitType = keep; this.form.visitTypeInferred = false; }
+      } else { this.form.beneficiaryId = person.beneficiaryId || null; this.form.name = person.name || null; this.form.isNew = true; }
+    }
+    return this.form;
+  }
+
+  // Reopen a saved record for correction. Saving again overwrites it (same visitId) and keeps
+  // its original visit date.
+  edit(rec) {
+    this.reset();
+    const f = this.form;
+    const b = rec.beneficiaryId && !rec.isNew ? this.registry.find((p) => p.id === rec.beneficiaryId) : null;
+    Object.assign(f, {
+      visitId: rec.visitId, beneficiary: b || null, beneficiaryId: rec.beneficiaryId ?? null, name: rec.name ?? null, isNew: Boolean(rec.isNew),
+      visitType: rec.visitType ?? null, weightKg: rec.weightKg ?? null, bp: rec.bp ?? null, hb: rec.hb ?? null, tempC: rec.tempC ?? null,
+      respRate: rec.respRate ?? null, gestWeeks: rec.gestWeeks ?? null, babyAgeDays: rec.babyAgeDays ?? null, ifaGiven: rec.ifaGiven ?? null,
+      vaccinesGiven: [...(rec.vaccinesGiven || [])], nextVisit: rec.nextVisit ?? null, transcript: [...(rec.transcript || [])],
+      dangersAbsent: [...(rec.dangerSignsDenied || [])],
+    });
+    // Signs that came from a number (BP, Hb, temperature) are recomputed, so correcting the
+    // number clears them; signs from her words stay until she says otherwise.
+    const fromNumbers = numericDangers(f, this.group());
+    f.textDangers = (rec.dangerSigns || []).filter((d) => !fromNumbers.includes(d));
+    this.updateDangers({ dangers: { present: [] } });
+    if (this.vaccinesDue() === null) {
+      f.vaccinesDueStated = [...(rec.vaccinesDue || [])];
+      if (!f.vaccinesDueStated.length) f.vaccinesDueNone = true;
+    }
+    this.editing = { visitDate: rec.visitDate, savedAt: rec.savedAt };
+    this.state = 'confirm';
+    return f;
+  }
+
+  // Resume an unfinished visit saved as a draft.
+  restore(draft) {
+    this.reset();
+    if (!draft?.form) return;
+    this.form = { ...newForm(), ...draft.form };
+    this.editing = draft.editing || null;
+    this.state = 'dictate';
+  }
+
+  snapshot() {
+    return { form: this.form, editing: this.editing };
+  }
+
+  // true once anything was heard or filled in
+  get dirty() {
+    const f = this.form;
+    return Boolean(f.transcript.length || f.beneficiaryId || f.name || f.weightKg !== null || f.nextVisit || f.dangers.length);
   }
 
   get L() {
@@ -279,7 +341,7 @@ export class VisitAgent {
     const lang = this.lang;
     switch (field) {
       case 'beneficiary': {
-        const nm = f.beneficiary ? (lang === 'hi' ? f.beneficiary.nameHi : lang === 'kn' ? f.beneficiary.nameKn : null) || f.beneficiary.name : f.name;
+        const nm = f.beneficiary ? ((lang === 'hi' || lang === 'mr') ? f.beneficiary.nameHi : lang === 'kn' ? f.beneficiary.nameKn : null) || f.beneficiary.name : f.name;
         return [nm, f.beneficiaryId ? L.idPart(f.beneficiaryId) : null].filter(Boolean).join(', ');
       }
       case 'visitType': return f.visitType ? L.visitPart(f.visitType) : null;
@@ -336,8 +398,9 @@ export class VisitAgent {
       referToPHC: f.dangers.length > 0,
       transcript: f.transcript,
       lang: this.lang,
-      visitDate: iso(this.now()),
-      savedAt: new Date().toISOString(),
+      visitDate: this.editing?.visitDate || iso(this.now()),
+      savedAt: this.editing?.savedAt || new Date().toISOString(),
+      updatedAt: this.editing ? new Date().toISOString() : null,
     };
   }
 
@@ -360,7 +423,7 @@ export class VisitAgent {
   handle(text, meta = {}) {
     const L = this.L;
     const now = this.now();
-    const r = extract(text, { now, registry: this.registry, expect: this.expect });
+    const r = extract(text, { now, registry: this.registry, expect: this.expect, lang: this.lang });
     const f = this.form;
     f.transcript.push(text);
     const say = [];

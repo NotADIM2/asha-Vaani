@@ -48,24 +48,56 @@ export function retentionDays() {
   try { return Number(localStorage.getItem('retentionDays')) || 7; } catch { return 7; }
 }
 
-export async function saveRecord(rec) {
+// Nothing here is sent to a server: this prototype has no sync. The UI says so.
+const DRAFT = '__draft';
+
+async function seal(obj) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await key(), new TextEncoder().encode(JSON.stringify(rec)));
-  await req((await store('records', 'readwrite')).put({ id: rec.visitId, iv, data, expiresAt: Date.now() + retentionDays() * DAY }));
+  const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await key(), new TextEncoder().encode(JSON.stringify(obj)));
+  return { iv, data };
 }
 
+async function open(row, k) {
+  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: row.iv }, k, row.data);
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
+// Resolves only after IndexedDB has committed the write, so "saved" is never said early.
+export async function saveRecord(rec) {
+  const sealed = await seal(rec);
+  const s = await store('records', 'readwrite');
+  const done = new Promise((resolve, reject) => { s.transaction.oncomplete = resolve; s.transaction.onerror = () => reject(s.transaction.error); s.transaction.onabort = () => reject(s.transaction.error || new Error('write aborted')); });
+  s.put({ id: rec.visitId, ...sealed, expiresAt: Date.now() + retentionDays() * DAY });
+  await done;
+}
+
+// Each record comes back with `expiresAt` so the screen can say when it will be deleted.
 export async function listRecords() {
   await purgeExpired();
   const rows = await req((await store('records')).getAll());
   const k = await key();
   const out = [];
   for (const row of rows) {
-    try {
-      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: row.iv }, k, row.data);
-      out.push(JSON.parse(new TextDecoder().decode(plain)));
-    } catch { /* undecryptable rows are skipped */ }
+    if (row.id === DRAFT) continue;
+    try { out.push({ ...(await open(row, k)), expiresAt: row.expiresAt }); } catch { /* undecryptable rows are skipped */ }
   }
-  return out.sort((a, b) => (b.savedAt || '').localeCompare(a.savedAt || ''));
+  return sortLatestFirst(out);
+}
+
+// An unfinished visit, kept (encrypted) so a reload or a dropped connection doesn't lose it.
+export async function saveDraft(form) {
+  const sealed = await seal(form);
+  await req((await store('records', 'readwrite')).put({ id: DRAFT, ...sealed, expiresAt: Date.now() + retentionDays() * DAY }));
+}
+
+export async function loadDraft() {
+  const row = await req((await store('records')).get(DRAFT));
+  if (!row || row.expiresAt < Date.now()) return null;
+  try { return await open(row, await key()); } catch { return null; }
+}
+
+export async function clearDraft() {
+  await req((await store('records', 'readwrite')).delete(DRAFT));
 }
 
 export async function purgeExpired() {
@@ -79,24 +111,67 @@ export async function deleteAll() {
   await req((await store('records', 'readwrite')).clear());
 }
 
-// Follow-up list: referrals first (due today), then upcoming visits by date.
+// ---------- pure helpers (no storage), shared by every screen and the spoken list ----------
+
+export function sortLatestFirst(records) {
+  return [...records].sort((a, b) => (b.visitDate || '').localeCompare(a.visitDate || '') || (b.savedAt || '').localeCompare(a.savedAt || ''));
+}
+
+function plusDays(isoStr, n) {
+  const [y, m, d] = isoStr.split('-').map(Number);
+  const x = new Date(y, m - 1, d + n);
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+}
+
+// One definition of "due" used everywhere: overdue | today | soon (next 7 days) | later | none.
+export function dueStatus(dueIso, todayIso) {
+  if (!dueIso) return 'none';
+  if (dueIso < todayIso) return 'overdue';
+  if (dueIso === todayIso) return 'today';
+  if (dueIso <= plusDays(todayIso, 7)) return 'soon';
+  return 'later';
+}
+
+const STATUS_ORDER = { overdue: 0, today: 1, soon: 2, later: 3, none: 4 };
+
+// Follow-up list from each person's latest visit. A referral stays dated to the visit where
+// it was advised (it is not re-dated to "today" every day); the next-visit date is the due date.
 export function followupsFrom(records, todayIso) {
   const latest = new Map();
-  for (const r of records) {
-    const k = r.beneficiaryId || r.name;
+  for (const r of sortLatestFirst(records)) {
+    const k = r.beneficiaryId || r.name || r.visitId;
     if (!latest.has(k)) latest.set(k, r);
   }
   return [...latest.values()]
     .filter((r) => r.nextVisit || r.referToPHC)
     .map((r) => ({
+      visitId: r.visitId,
       name: r.name,
       beneficiaryId: r.beneficiaryId,
-      refer: r.referToPHC,
-      dangerSigns: r.dangerSigns,
-      when: r.referToPHC ? todayIso : r.nextVisit,
+      refer: Boolean(r.referToPHC),
+      referredOn: r.referToPHC ? r.visitDate : null,
+      dangerSigns: r.dangerSigns || [],
+      due: r.nextVisit || null,
+      when: r.nextVisit || r.visitDate,
       nextVisit: r.nextVisit,
-      vaccinesDue: r.vaccinesDue,
+      status: dueStatus(r.nextVisit, todayIso),
+      vaccinesDue: r.vaccinesDue || [],
       visitType: r.visitType,
     }))
-    .sort((a, b) => (b.refer - a.refer) || a.when.localeCompare(b.when));
+    .sort((a, b) => (b.refer - a.refer) || (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (a.when || '').localeCompare(b.when || ''));
+}
+
+// Counts only, for a review screen: no names, no per-worker scores, no location.
+export function summarize(records, todayIso) {
+  const fu = followupsFrom(records, todayIso);
+  const byType = { ANC: 0, PNC: 0, HBNC: 0, IMM: 0 };
+  for (const r of records) if (r.visitType in byType) byType[r.visitType]++;
+  return {
+    visits: records.length,
+    byType,
+    referrals: records.filter((r) => r.referToPHC).length,
+    overdue: fu.filter((x) => x.status === 'overdue').length,
+    dueSoon: fu.filter((x) => x.status === 'today' || x.status === 'soon').length,
+    newPeople: records.filter((r) => r.isNew).length,
+  };
 }

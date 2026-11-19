@@ -1,8 +1,14 @@
 // Tiny phrase matcher over phonetic keys.
 // Pattern syntax: words separated by spaces; "a|b" = alternatives; trailing "~" = prefix match.
 // Pattern words may be in any script; they go through the same transliterate+phon pipeline.
+// Latin and Devanagari words match tokens in any script (Hinglish, Marathi). A word written in
+// a regional script (Tamil, Telugu, Kannada, Malayalam, Bengali, Gujarati, Gurmukhi) matches
+// only tokens in that script: Malayalam "പനി" (fever) and Hindi "पानी" (water) share a key.
 // Up to `gap` unrelated tokens may sit between pattern words ("khoon thoda aa raha").
-import { transliterate, phon } from './translit.js';
+import { transliterate, phon, scriptOf } from './translit.js';
+
+const SHARED = new Set(['latn', 'deva']);
+const lockOf = (word) => { const sc = scriptOf(word); return SHARED.has(sc) ? null : sc; };
 
 function keyOf(word) {
   return phon(transliterate(word).toLowerCase());
@@ -30,7 +36,7 @@ export function compile(pattern) {
       const prefix = alt.endsWith('~');
       const word = prefix ? alt.slice(0, -1) : alt;
       // a multi-word alternative in another script ("खून की") is split by the caller; keep simple
-      return { key: keyOf(word), prefix };
+      return { key: keyOf(word), prefix, script: lockOf(word) };
     }),
   );
 }
@@ -38,6 +44,7 @@ export function compile(pattern) {
 function tokMatches(tok, alts) {
   for (const a of alts) {
     if (!a.key) continue;
+    if (a.script && tok.script !== a.script) continue;
     if (a.prefix ? tok.key.startsWith(a.key) : tok.key === a.key) return true;
     if (!a.prefix && a.key.length >= 6 && tok.key.length >= 5 && a.key.slice(0, 2) === tok.key.slice(0, 2) && editDistanceLE1(tok.key, a.key)) return true;
   }
@@ -78,6 +85,25 @@ export function makeMatcher(patterns, gap = 2) {
   };
 }
 
+// A word set. has(token) applies the same script rule as patterns; has(string) checks a bare
+// key against the script-neutral words only. A word ending in "~" matches as a prefix.
+class KeySet extends Set {
+  constructor() { super(); this.prefixes = []; }
+  has(x) {
+    if (x == null) return false;
+    if (typeof x === 'string') return super.has(x) || this.prefixes.some((p) => !p.script && x.startsWith(p.key));
+    if (super.has(x.key) || super.has(`${x.script}:${x.key}`)) return true;
+    return this.prefixes.some((p) => (!p.script || p.script === x.script) && x.key.startsWith(p.key));
+  }
+}
 export function keySet(words) {
-  return new Set(words.map(keyOf));
+  const s = new KeySet();
+  for (const w of words) {
+    const prefix = w.endsWith('~');
+    const word = prefix ? w.slice(0, -1) : w;
+    const sc = lockOf(word);
+    if (prefix) s.prefixes.push({ key: keyOf(word), script: sc });
+    else s.add(sc ? `${sc}:${keyOf(word)}` : keyOf(word));
+  }
+  return s;
 }

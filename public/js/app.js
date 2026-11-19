@@ -1,13 +1,13 @@
 // Wires mic -> STT -> agent -> TTS, with barge-in, echo rejection, adaptive endpointing
-// and a live time-to-first-audio readout.
+// and a live time-to-first-audio readout. Screens: start, visit, follow-ups, records, settings.
 import { VisitAgent } from './agent.js';
 import { buildRegistry, registryKeyterms } from './nlu/registry.js';
 import { Mic, Vad, Player } from './audio.js';
-import { saveRecord, listRecords, deleteAll, followupsFrom } from './store.js';
+import { saveRecord, listRecords, deleteAll, followupsFrom, summarize, saveDraft, loadDraft, clearDraft } from './store.js';
 import { dangerLabel } from './nlu/danger.js';
 import { iso } from './nlu/dates.js';
 import { tokenize } from './nlu/translit.js';
-import { VISIT_LABEL, LANGS, UI } from './i18n.js';
+import { VISIT_LABEL, LANGS, UI, YES_WORD, screenText } from './i18n.js';
 import { stripEcho, isBargeIn } from './echo.js';
 
 const $ = (id) => document.getElementById(id);
@@ -66,12 +66,32 @@ let duckTimer = null;
 let commitTimer = null;
 
 // ---------------- UI helpers ----------------
-function toast(msg, ms = 3200) {
+const S = () => screenText(lang);
+const locale = () => (lang === 'en' ? 'en-IN' : `${lang}-IN`);
+
+function toast(msg, ms = 3600) {
   const el = $('toast');
   el.textContent = msg;
   el.hidden = false;
   clearTimeout(toast.t);
   toast.t = setTimeout(() => { el.hidden = true; }, ms);
+}
+
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function phoneOnly(s) {
+  return String(s).replace(/[^\d+]/g, '').slice(0, 15);
+}
+
+// Static screen text: every element with data-t gets its string in the current language.
+function applyScreenText() {
+  const s = S();
+  document.querySelectorAll('[data-t]').forEach((el) => { const v = s[el.dataset.t]; if (typeof v === 'string') el.textContent = v; });
+  document.querySelectorAll('[data-t-ph]').forEach((el) => { el.placeholder = s[el.dataset.tPh] || ''; });
+  $('aboutList').innerHTML = s.about.map((x) => `<li>${escapeHtml(x)}</li>`).join('');
+  setNet();
 }
 
 function setStatus(kind) {
@@ -83,47 +103,90 @@ function setStatus(kind) {
   $('status').textContent = kind === 'listening' ? u.listening : kind === 'speaking' ? u.speaking : kind === 'thinking' ? '…' : talkMode === 'ptt' ? u.hold : u.tapToTalk;
 }
 
+// Connection state is shown as it is: the browser's own online flag. Nothing is synced either way.
+function setNet() {
+  const on = navigator.onLine;
+  const el = $('net');
+  el.textContent = on ? S().online : S().offline;
+  el.className = `net ${on ? 'on' : 'off'}`;
+  $('offlineBar').hidden = on;
+}
+
 function fmtDate(isoStr) {
   if (!isoStr) return '';
   const [y, m, d] = isoStr.split('-').map(Number);
-  return new Date(y, m - 1, d).toLocaleDateString(lang === 'en' ? 'en-IN' : `${lang}-IN`, { day: 'numeric', month: 'short', year: 'numeric' });
+  return new Date(y, m - 1, d).toLocaleDateString(locale(), { day: 'numeric', month: 'short', year: 'numeric' });
 }
+
+function fmtTime(ts) {
+  return new Date(ts).toLocaleString(locale(), { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+function relDay(isoStr) {
+  if (!isoStr) return '';
+  const [y, m, d] = isoStr.split('-').map(Number);
+  const now = new Date();
+  const days = Math.round((new Date(y, m - 1, d) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5);
+  const s = S();
+  if (days === 0) return s.today;
+  if (days === 1) return s.tomorrow;
+  if (days < 0) return s.daysLate(-days);
+  return days < 7 ? s.inDays(days) : fmtDate(isoStr);
+}
+
+// The visit as field rows, shared by the live visit card and the saved-record view.
+function fieldRows(v) {
+  const s = S();
+  const e = escapeHtml;
+  const vitals = [v.bp && `BP ${v.bp.sys}/${v.bp.dia}`, v.hb != null && `Hb ${v.hb}`, v.tempC != null && `Temp ${v.tempC}°C`, v.respRate != null && `Breaths ${v.respRate}/min`, v.gestWeeks != null && `${v.gestWeeks} wk pregnant`, v.babyAgeDays != null && `baby ${v.babyAgeDays} days`, v.ifaGiven && `IFA${v.ifaGiven === true ? '' : `: ${v.ifaGiven}`}`].filter(Boolean).join(' · ');
+  const vaccines = () => {
+    const parts = (v.vaccinesGiven || []).map((x) => `<span class="chip">✔ ${e(x)} ${e(s.given)}</span>`);
+    if (v.vaccinesDue === null) return parts.join('');
+    if (!v.vaccinesDue.length) parts.push(`<span class="chip denied">${e(s.noneDue)}</span>`);
+    for (const x of v.vaccinesDue) parts.push(`<span class="chip due">${e(x)} ${e(s.due)}</span>`);
+    return parts.join('');
+  };
+  const dangers = () => [
+    ...(v.dangers || []).map((d) => `<span class="chip danger">⚠ ${e(dangerLabel(d, lang))}</span>`),
+    ...(v.dangersAbsent || []).map((d) => `<span class="chip denied">${e(s.checkedNo)}: ${e(dangerLabel(d, lang))}</span>`),
+  ].join('');
+  const who = v.beneficiaryId || v.name ? `${v.name || '—'}${v.beneficiaryId ? ` · ID ${v.beneficiaryId}` : ''}${v.ward != null ? ` · ward ${v.ward}` : ''}${v.isNew ? ` · ${s.newPerson}` : ''}` : '';
+  return [
+    ['beneficiary', s.fBeneficiary, e(who)],
+    ['visitType', s.fVisitType, v.visitType ? e(VISIT_LABEL[v.visitType] + (v.visitTypeInferred ? ` (${s.fromRegister})` : '')) : ''],
+    ['weightKg', s.fWeight, v.weightKg != null ? `${e(v.weightKg)} kg` : ''],
+    ['vitals', s.fVitals, e(vitals), true],
+    ['vaccines', s.fVaccines, vaccines()],
+    ['nextVisit', s.fNext, v.nextVisit ? e(fmtDate(v.nextVisit)) : ''],
+    ['dangers', s.fDangers, dangers(), true],
+  ];
+}
+
+function dl(rows, flashOf = () => false) {
+  return rows.filter(([, , val, optional]) => !(optional && !val))
+    .map(([key, label, val]) => `<dt>${escapeHtml(label)}</dt><dd class="${val ? '' : 'empty'}${val && flashOf(key, val) ? ' flash' : ''}">${val || escapeHtml(S().waiting)}</dd>`).join('');
+}
+
+const NEED_KEY = { beneficiary: 'needBeneficiary', visitType: 'needVisitType', weightKg: 'needWeight', vaccinesDue: 'needVaccines', nextVisit: 'needNext' };
+const needList = (missing) => missing.map((m) => S()[NEED_KEY[m]] || m).join(', ');
 
 let lastRendered = {};
 function renderForm(changed = []) {
   const f = agent.form;
-  const due = agent.vaccinesDue();
-  const rows = [
-    ['beneficiary', 'Beneficiary', 'लाभार्थी', f.beneficiaryId || f.name ? `${f.name || '—'}${f.beneficiaryId ? ` · ID ${f.beneficiaryId}` : ''}${f.beneficiary ? ` · ward ${f.beneficiary.ward}` : ''}${f.isNew ? ' · new' : ''}` : ''],
-    ['visitType', 'Visit type', 'विज़िट', f.visitType ? VISIT_LABEL[f.visitType] + (f.visitTypeInferred ? ' (from register)' : '') : ''],
-    ['weightKg', 'Weight', 'वज़न', f.weightKg !== null ? `${f.weightKg} kg` : ''],
-    ['vitals', 'Vitals', 'जाँच', [f.bp && `BP ${f.bp.sys}/${f.bp.dia}`, f.hb !== null && `Hb ${f.hb}`, f.tempC !== null && `Temp ${f.tempC}°C`, f.respRate !== null && `Breaths ${f.respRate}/min`, f.gestWeeks !== null && `${f.gestWeeks} wk pregnant`, f.babyAgeDays !== null && `baby ${f.babyAgeDays} days`, f.ifaGiven && `IFA given${f.ifaGiven === true ? '' : `: ${f.ifaGiven}`}`].filter(Boolean).join(' · '), true],
-    ['vaccines', 'Vaccines', 'टीके', '', false, () => {
-      const parts = [];
-      for (const v of f.vaccinesGiven) parts.push(`<span class="chip">✔ ${v} given</span>`);
-      if (due === null) return parts.join('');
-      if (!due.length) parts.push('<span class="chip">none due</span>');
-      for (const v of due) parts.push(`<span class="chip due">${v} due</span>`);
-      return parts.join('');
-    }],
-    ['nextVisit', 'Next visit', 'अगली विज़िट', f.nextVisit ? fmtDate(f.nextVisit) : ''],
-    ['dangers', 'Danger signs', 'खतरे के संकेत', '', true, () => {
-      const p = f.dangers.map((d) => `<span class="chip danger">⚠ ${dangerLabel(d, 'en')}</span>`);
-      p.push(...f.dangersAbsent.map((d) => `<span class="chip denied">checked: no ${dangerLabel(d, 'en')}</span>`));
-      return p.join('') || '';
-    }],
-  ];
-  const html = [];
-  for (const [key, en, hi, text, optional, fn] of rows) {
-    const value = fn ? fn() : text;
-    if (optional && !value) continue;
-    const flash = changed.includes(key) || (key === 'vitals' && changed.some((c) => ['bp', 'hb', 'tempC', 'respRate', 'gestWeeks', 'babyAgeDays', 'ifaGiven'].includes(c))) || (key === 'dangers' && changed.includes('dangers')) || (lastRendered[key] !== undefined && lastRendered[key] !== value);
-    lastRendered[key] = value;
-    const safe = fn ? value : escapeHtml(value);
-    html.push(`<dt>${en}<small>${hi}</small></dt><dd class="${value ? '' : 'empty'}${flash && value ? ' flash' : ''}">${value ? safe : 'waiting…'}</dd>`);
-  }
-  $('form').innerHTML = html.join('');
-  $('stateLbl').textContent = { dictate: 'listening', ask: 'asking', disambiguate: 'which person?', confirm: 'confirm?' }[agent.state] || '';
+  const view = { ...f, ward: f.beneficiary?.ward, vaccinesDue: agent.vaccinesDue() };
+  const vitalKeys = ['bp', 'hb', 'tempC', 'respRate', 'gestWeeks', 'babyAgeDays', 'ifaGiven'];
+  const flashOf = (key, val) => {
+    const hit = changed.includes(key) || (key === 'vitals' && changed.some((c) => vitalKeys.includes(c))) || (lastRendered[key] !== undefined && lastRendered[key] !== val);
+    lastRendered[key] = val;
+    return hit;
+  };
+  $('form').innerHTML = dl(fieldRows(view), flashOf);
+  $('stateLbl').textContent = { ask: '· asking', disambiguate: '· which person?', confirm: '· confirm?' }[agent.state] || '';
+  const missing = agent.missing();
+  $('needs').hidden = !agent.dirty || !missing.length;
+  $('needs').textContent = S().stillNeeded(needList(missing));
+  $('editNote').hidden = !agent.editing;
+  if (agent.editing) $('editNote').textContent = S().editing(fmtDate(agent.editing.visitDate));
   const alert = $('alert');
   alert.hidden = !f.dangers.length;
   if (f.dangers.length) {
@@ -132,181 +195,156 @@ function renderForm(changed = []) {
   }
 }
 
-function phoneOnly(s) {
-  return String(s).replace(/[^\d+]/g, '').slice(0, 15);
+// ---------- drafts: an unfinished visit survives a reload or a lost connection ----------
+let draftTimer = null;
+function persistDraft() {
+  clearTimeout(draftTimer);
+  draftTimer = setTimeout(() => {
+    const job = agent.dirty ? saveDraft(agent.snapshot()) : clearDraft();
+    job.catch(() => { /* the visit is still on screen; storage may be blocked */ });
+  }, 300);
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+async function showDraftCard() {
+  let d = null;
+  try { d = await loadDraft(); } catch { /* storage blocked */ }
+  const card = $('draftCard');
+  if (!d?.form || agent.dirty) { card.hidden = true; return; }
+  const peek = new VisitAgent({ lang, registry });
+  peek.restore(d);
+  const f = peek.form;
+  const who = [f.name, f.beneficiaryId && `ID ${f.beneficiaryId}`, f.visitType && VISIT_LABEL[f.visitType]].filter(Boolean).join(' · ') || '—';
+  const missing = peek.missing();
+  $('draftText').textContent = `${who}${missing.length ? `. ${S().draftNeeds(needList(missing))}` : ''}`;
+  card.hidden = false;
+  card.dataset.ready = '1';
+  showDraftCard.draft = d;
 }
 
-const GREET = {
-  hi: 'नमस्ते, <b>आशा दीदी</b> 👋',
-  en: 'Namaste, <b>ASHA didi</b> 👋',
-  kn: 'ನಮಸ್ಕಾರ, <b>ಆಶಾ ಅಕ್ಕ</b> 👋',
-};
-const DAILY_GOAL = 5;
-const locale = () => (lang === 'en' ? 'en-IN' : `${lang}-IN`);
-const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
-
-function initials(name) {
-  const w = String(name || '?').trim().split(/\s+/);
-  return escapeHtml(((w[0] || '?')[0] + (w[1] ? w[1][0] : '')).toUpperCase());
-}
-
-function relDay(isoStr) {
-  if (!isoStr) return '';
-  const [y, m, d] = isoStr.split('-').map(Number);
-  const now = new Date();
-  const days = Math.round((new Date(y, m - 1, d) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 864e5);
-  if (days === 0) return 'Today';
-  if (days === 1) return 'Tomorrow';
-  if (days > 1 && days < 7) return `In ${days} days`;
-  if (days < 0) return `${-days} d overdue`;
-  return fmtDate(isoStr);
-}
-
-function setRing(id, pct) {
-  $(id).style.setProperty('--p', String(Math.max(0, Math.min(100, Math.round(pct)))));
-}
-
-// Home: today's snapshot, the week's visits and the next three follow-ups.
-function renderHome(fu) {
-  const now = new Date();
-  const todayIso = iso(now);
-  $('greet').innerHTML = GREET[lang] || GREET.en;
-  $('todayLbl').textContent = `Today is ${now.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}`;
-
-  const visits = records.filter((r) => r.visitDate === todayIso).length;
-  const refer = fu.filter((x) => x.refer).length;
-  const weekEnd = iso(addDays(now, 7));
-  const due = fu.filter((x) => !x.refer && x.when <= weekEnd).length;
-  const vax = fu.reduce((n, x) => n + (x.vaccinesDue?.length || 0), 0);
-  $('stVisits').textContent = visits;
-  $('stRefer').textContent = refer;
-  $('stDue').textContent = due;
-  $('stVax').textContent = vax;
-  setRing('ringVisits', (visits / DAILY_GOAL) * 100);
-  setRing('ringRefer', refer ? 100 : 0);
-  setRing('ringDue', fu.length ? (due / fu.length) * 100 : 0);
-  setRing('ringVax', Math.min(100, vax * 12.5));
-  $('referTag').textContent = refer ? 'act today' : 'all clear';
-  $('referTag').classList.toggle('alert-tag', refer > 0);
-
-  const days = Array.from({ length: 7 }, (_, i) => addDays(now, i - 6));
-  const counts = days.map((d) => records.filter((r) => r.visitDate === iso(d)).length);
-  const max = Math.max(1, ...counts);
-  $('weekTotal').textContent = counts.reduce((a, b) => a + b, 0);
-  $('weekBars').innerHTML = days.map((d, i) => `<div class="bar${i === 6 ? ' today' : ''}"><span class="n">${counts[i]}</span><span class="col"></span><span class="d">${escapeHtml(d.toLocaleDateString(locale(), { weekday: 'short' }))}</span></div>`).join('');
-  $('weekBars').querySelectorAll('.col').forEach((el, i) => {
-    el.style.setProperty('--h', '0');
-    requestAnimationFrame(() => el.style.setProperty('--h', String((counts[i] / max) * 100)));
-  });
-
-  $('nextUp').innerHTML = fu.length
-    ? fu.slice(0, 3).map((x) => `<li class="glass"><span class="av${x.refer ? ' refer' : ''}">${initials(x.name)}</span><span class="who"><b>${escapeHtml(x.name || '—')}</b><span>${x.beneficiaryId ? `ID ${escapeHtml(x.beneficiaryId)} · ` : ''}${escapeHtml(VISIT_LABEL[x.visitType] || 'Visit')}${x.vaccinesDue?.length ? ` · ${escapeHtml(x.vaccinesDue.join(', '))} due` : ''}</span></span><span class="when${x.refer ? ' refer' : ''}">${x.refer ? 'Refer today' : escapeHtml(relDay(x.when))}</span></li>`).join('')
-    : '<li class="glass empty">No follow-ups yet. Start a visit to build your list.</li>';
-}
-
-// Deterministic barcode drawn from the visit id (decoration; the id is printed below it).
-function barcodeSvg(seed) {
-  const s = String(seed || 'asha');
-  const bars = [];
-  let x = 0;
-  for (let i = 0; i < 46; i++) {
-    const c = s.charCodeAt(i % s.length) * (i + 3);
-    const w = 1 + (c % 3);
-    bars.push(`<rect x="${x}" y="0" width="${w}" height="40"/>`);
-    x += w + 1 + ((c >> 3) % 2);
-  }
-  return `<svg class="barcode" viewBox="0 0 ${x} 40" preserveAspectRatio="none" aria-hidden="true">${bars.join('')}</svg>`;
-}
-
-// Records are shown as printed visit slips: what was recorded, what was heard, what is next.
-function slipHtml(r) {
-  const e = escapeHtml;
-  // the slip is printed in one script, like a real receipt
-  const fmtDate = (isoStr) => {
-    if (!isoStr) return '';
-    const [y, m, d] = isoStr.split('-').map(Number);
-    return new Date(y, m - 1, d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
-  };
-  const ln = (k, v) => `<div class="ln"><span>${e(k)}</span><span>${e(v)}</span></div>`;
-  const saved = r.savedAt ? new Date(r.savedAt) : null;
-  const slipNo = String(r.visitId || '').slice(-6).toUpperCase();
-  const vitals = [
-    r.weightKg != null && ln('WEIGHT', `${Number(r.weightKg).toFixed(1)} kg`),
-    r.bp && ln('BP', `${r.bp.sys}/${r.bp.dia}`),
-    r.hb != null && ln('HB', `${r.hb} g/dL`),
-    r.tempC != null && ln('TEMP', `${r.tempC} °C`),
-    r.respRate != null && ln('BREATHS', `${r.respRate}/min`),
-    r.gestWeeks != null && ln('PREGNANCY', `${r.gestWeeks} wk`),
-    r.babyAgeDays != null && ln('BABY AGE', `${r.babyAgeDays} d`),
-    r.ifaGiven && ln('IFA', r.ifaGiven === true ? 'given' : r.ifaGiven),
-  ].filter(Boolean).join('');
-  const given = (r.vaccinesGiven || []).map((v) => `<div class="ln ind"><span>${e(v)}</span><span>given</span></div>`).join('');
-  const due = (r.vaccinesDue || []).map((v) => `<div class="ln ind"><span>${e(v)}</span><span>due</span></div>`).join('');
-  const signs = (r.dangerSigns || []).map((d) => dangerLabel(d, 'en'));
-  const denied = (r.dangerSignsDenied || []).map((d) => dangerLabel(d, 'en'));
-  const heard = (r.transcript || []).slice(-3).map((t) => `<div class="heard">“${e(typeof t === 'string' ? t : t?.text || '')}”</div>`).join('');
-  const receipt = `<div class="receipt">
-    <div class="c ttl">ASHA VAANI</div>
-    <div class="c">VOICE VISIT SLIP</div>
-    <div class="c">${r.ward != null ? `Ward ${e(r.ward)} · ` : ''}Sub-centre register</div>
-    <hr>
-    ${ln(`SLIP ${slipNo}`, r.lang ? `SPOKEN ${String(r.lang).toUpperCase()}` : '')}
-    ${ln(fmtDate(r.visitDate).toUpperCase(), saved ? saved.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '')}
-    <hr>
-    ${ln(r.name || '—', r.beneficiaryId ? `ID ${r.beneficiaryId}` : (r.isNew ? 'NEW' : ''))}
-    <div>${e(VISIT_LABEL[r.visitType] || 'Visit')}</div>
-    ${vitals ? `<hr>${vitals}` : ''}
-    ${given || due ? `<hr><div>VACCINES</div>${given}${due}` : ''}
-    <hr>
-    ${signs.length ? `<div class="flag">REFER TO PHC TODAY</div>${signs.map((x) => `<div class="ind">! ${e(x)}</div>`).join('')}` : ln('STATUS', 'ROUTINE')}
-    ${denied.length ? `<div class="ind">checked, not present: ${e(denied.join(', '))}</div>` : ''}
-    <hr>
-    <div class="ln big"><span>NEXT VISIT</span><span>${e(r.nextVisit ? fmtDate(r.nextVisit).toUpperCase() : '—')}</span></div>
-    ${heard ? `<hr><div>HEARD</div>${heard}` : ''}
-    ${barcodeSvg(r.visitId)}
-    <div class="code">${e(String(r.visitId || '').toUpperCase())}</div>
-    <div class="thanks">DHANYAVAAD, DIDI</div>
-    <div class="c">encrypted on this phone</div>
-  </div>`;
-  const kv = (k, v, cls = '') => `<div class="kv"><span>${e(k)}</span><span class="${cls}">${e(v)}</span></div>`;
-  const cards = `<div class="slip-cards">
-    <div class="slip-card"><h3>Weight</h3>
-      <div class="amt">${r.weightKg != null ? e(r.weightKg) : '–'} <span class="unit">KG</span></div>
-      ${r.bp ? kv('BP', `${r.bp.sys}/${r.bp.dia}`) : ''}${r.hb != null ? kv('Hb', `${r.hb} g/dL`) : ''}${r.tempC != null ? kv('Temp', `${r.tempC} °C`) : ''}
-      <div class="note">Range-checked before saving</div>
-    </div>
-    <div class="slip-card"><h3>Details</h3>
-      ${kv('Visit', r.visitType || '—')}
-      ${kv('Date', fmtDate(r.visitDate))}
-      ${r.ward != null ? kv('Ward', r.ward) : ''}
-      ${kv('Next visit', r.nextVisit ? fmtDate(r.nextVisit) : '—', 'hl')}
-      ${kv('Status', signs.length ? 'Referred' : 'Routine', signs.length ? 'bad' : '')}
-    </div>
-  </div>`;
-  return `<div class="tray">${receipt}${cards}</div>`;
-}
-
+// ---------- lists ----------
+let listError = null;
 async function refreshLists() {
-  try { records = await listRecords(); } catch { records = []; }
+  listError = null;
+  try { records = await listRecords(); } catch (e) { listError = e?.message || String(e); records = []; }
+  renderFollowups();
+  renderRecords();
+  showDraftCard();
+}
+
+function followItem(x, { compact = false } = {}) {
+  const s = S();
+  const e = escapeHtml;
+  const sub = [
+    VISIT_LABEL[x.visitType] || '',
+    x.refer ? s.referredOn(fmtDate(x.referredOn)) : '',
+    x.refer && x.dangerSigns.length ? x.dangerSigns.map((d) => dangerLabel(d, lang)).join(', ') : '',
+    !compact && x.vaccinesDue.length ? `${s.due}: ${x.vaccinesDue.join(', ')}` : '',
+  ].filter(Boolean).join(' · ');
+  const when = x.due ? `${relDay(x.due)}${x.status === 'soon' || x.status === 'later' ? '' : ` · ${fmtDate(x.due)}`}` : '';
+  return `<li class="item${x.refer ? ' refer' : ''}">
+    <span class="who"><b>${e(x.name || '—')}${x.beneficiaryId ? ` · ID ${e(x.beneficiaryId)}` : ''}</b><span>${e(sub)}</span>
+      <span class="when ${x.refer ? 'refer' : x.status}">${e(x.due ? s.nextOn(when) : '')}</span></span>
+    <button class="btn small" data-follow="${e(x.visitId)}">${e(s.startThis)}</button>
+  </li>`;
+}
+
+function renderFollowups() {
+  const s = S();
   const fu = followupsFrom(records, iso(new Date()));
-  $('followList').innerHTML = fu.length ? fu.map((x) => `<li><div class="li-top"><span>${escapeHtml(x.name || '—')}${x.beneficiaryId ? ` <small class="muted">ID ${escapeHtml(x.beneficiaryId)}</small>` : ''}</span><span>${x.refer ? '<span class="chip danger">Refer PHC today</span>' : escapeHtml(fmtDate(x.when))}</span></div><div class="li-sub">${escapeHtml(VISIT_LABEL[x.visitType] || '')}${x.vaccinesDue?.length ? ` · due: ${escapeHtml(x.vaccinesDue.join(', '))}` : ''}${x.refer ? ` · ${escapeHtml(x.dangerSigns.map((d) => dangerLabel(d, 'en')).join(', '))} · next visit ${escapeHtml(fmtDate(x.nextVisit))}` : ''}</div></li>`).join('') : '<li class="empty-note">No follow-ups yet. Saved visits appear here.</li>';
-  const refers = fu.filter((x) => x.refer).length;
-  $('followCount').hidden = !refers;
-  $('followCount').textContent = refers;
-  $('recordList').innerHTML = records.length
-    ? records.map((r, i) => `<li><details class="glass"${i === 0 ? ' open' : ''}><summary><span class="av${r.referToPHC ? ' refer' : ''}">${initials(r.name)}</span><span class="who"><b>${escapeHtml(r.name || '—')}</b><span>${escapeHtml(VISIT_LABEL[r.visitType] || 'Visit')} · ${escapeHtml(fmtDate(r.visitDate))}${r.referToPHC ? ' · <b class="referred">referred</b>' : ''}</span></span><svg class="chev" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="m9 6 6 6-6 6-1.4-1.4 4.6-4.6-4.6-4.6z"/></svg></summary>${slipHtml(r)}</details></li>`).join('')
-    : '<li class="glass empty-note">No saved visits yet. Speak a visit and say “haan” to save it.</li>';
-  renderHome(fu);
+  const groups = [
+    ['grpRefer', fu.filter((x) => x.refer)],
+    ['grpOverdue', fu.filter((x) => !x.refer && x.status === 'overdue')],
+    ['grpToday', fu.filter((x) => !x.refer && x.status === 'today')],
+    ['grpSoon', fu.filter((x) => !x.refer && x.status === 'soon')],
+    ['grpLater', fu.filter((x) => !x.refer && (x.status === 'later' || x.status === 'none'))],
+  ].filter(([, xs]) => xs.length);
+  $('followGroups').innerHTML = listError
+    ? `<p class="error">${escapeHtml(s.readFailed(listError))}</p>`
+    : groups.length
+      ? groups.map(([k, xs]) => `<h3 class="group">${escapeHtml(s[k])} (${xs.length})</h3><ul class="items">${xs.map((x) => followItem(x)).join('')}</ul>`).join('')
+      : `<p class="empty">${escapeHtml(s.fuEmpty)}</p>`;
+  const attention = fu.filter((x) => x.refer || x.status === 'overdue' || x.status === 'today');
+  $('dueCard').hidden = !attention.length;
+  $('dueList').innerHTML = attention.slice(0, 3).map((x) => followItem(x, { compact: true })).join('');
+  $('followCount').hidden = !attention.length;
+  $('followCount').textContent = attention.length;
+}
+
+function recordHtml(r) {
+  const s = S();
+  const e = escapeHtml;
+  const rows = fieldRows({ ...r, dangers: r.dangerSigns, dangersAbsent: r.dangerSignsDenied });
+  const heard = (r.transcript || []).slice(-3).map((t) => `<p class="heard">“${e(typeof t === 'string' ? t : t?.text || '')}”</p>`).join('');
+  const store = [s.stored, r.updatedAt ? s.edited(fmtTime(r.updatedAt)) : '', r.expiresAt ? s.deletesOn(fmtDate(iso(new Date(r.expiresAt)))) : ''].filter(Boolean).join(' ');
+  return `<details>
+    <summary><span><b>${e(r.name || '—')}${r.beneficiaryId ? ` · ID ${e(r.beneficiaryId)}` : ''}</b>
+      <span>${e(VISIT_LABEL[r.visitType] || '')} · ${e(fmtDate(r.visitDate))}${r.referToPHC ? ` · <span class="referred">${e(s.referred)}</span>` : ''}</span></span><span aria-hidden="true">›</span></summary>
+    <div class="rec-body">
+      <dl class="fields">${dl(rows)}</dl>
+      ${heard ? `<p class="muted"><b>${e(s.heard)}</b></p>${heard}` : ''}
+      <p class="store-line">${e(store)}</p>
+      <button class="btn" data-edit="${e(r.visitId)}">${e(s.editBtn)}</button>
+    </div>
+  </details>`;
+}
+
+function renderRecords() {
+  const s = S();
+  const e = escapeHtml;
+  if (listError) {
+    $('summary').hidden = true;
+    $('recordList').innerHTML = `<li class="error">${e(s.readFailed(listError))}</li>`;
+    return;
+  }
+  $('recordList').innerHTML = records.length ? records.map((r) => `<li>${recordHtml(r)}</li>`).join('') : `<li class="empty">${e(s.recEmpty)}</li>`;
+  // the summary only appears once there is something to count
+  $('summary').hidden = !records.length;
+  if (records.length) {
+    const m = summarize(records, iso(new Date()));
+    const cell = (n, label) => `<div><b>${n}</b><span>${e(label)}</span></div>`;
+    $('summary').innerHTML = `<h3>${e(s.sumTitle)}</h3><div class="sum-grid">
+      ${cell(m.visits, s.sumVisits)}
+      ${Object.entries(m.byType).filter(([, n]) => n).map(([k, n]) => cell(n, VISIT_LABEL[k])).join('')}
+      ${cell(m.referrals, s.sumRefer)}${cell(m.overdue, s.sumOverdue)}${cell(m.dueSoon, s.sumSoon)}${m.newPeople ? cell(m.newPeople, s.sumNew) : ''}
+    </div><p class="fine">${e(s.sumNote)}</p>`;
+  }
 }
 
 function showTab(name) {
   document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x.dataset.tab === name));
   document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.id === `tab-${name}`));
   window.scrollTo({ top: 0 });
+}
+
+// Begin a visit from a button: the chosen kind, or the person from a follow-up.
+function beginVisit(visitType, person = null) {
+  agent.startVisit(visitType || null, person);
+  lastRendered = {};
+  $('saveStatus').hidden = true;
+  renderForm();
+  persistDraft();
+  showTab('visit');
+  if (!navigator.onLine) { $('typeText').focus(); return; }
+  if (!running) start(); else speak(agent.L.newVisit);
+}
+
+function openForEdit(visitId) {
+  const r = records.find((x) => x.visitId === visitId);
+  if (!r) return;
+  agent.edit(r);
+  lastRendered = {};
+  $('saveStatus').hidden = true;
+  renderForm();
+  persistDraft();
+  showTab('visit');
+  if (running) speak(agent.readback());
+}
+
+function showSaved(ok, msg) {
+  const el = $('saveStatus');
+  el.hidden = false;
+  el.classList.toggle('bad', !ok);
+  el.textContent = ok ? S().savedLocal(fmtTime(Date.now())) : S().saveFailed(msg);
 }
 
 // ---------------- speaking ----------------
@@ -427,9 +465,18 @@ async function llmAssist(text) {
     if (x.beneficiaryId && !registry.some((b) => b.id === x.beneficiaryId)) delete x.beneficiaryId;
     if (x.visitType && !['ANC', 'PNC', 'HBNC', 'IMM'].includes(x.visitType)) delete x.visitType;
     const { changed, fresh } = agent.applyExternal(x);
-    if (changed.length || fresh.length) renderForm(changed);
+    if (changed.length || fresh.length) { renderForm(changed); persistDraft(); }
     if (fresh.length) speak(agent.L.alert(fresh.map((d) => dangerLabel(d, lang)).join(', ')));
   } catch { /* LLM is optional */ }
+}
+
+// Prisma tags the language from the script, so Marathi comes back as hi-IN (both Devanagari).
+// Marathi function words settle it.
+const MARATHI = /(^|\s)(आहे|आहेत|आणि|किंवा|नाही|उद्या|पुढची|पुढील|झाले|झालं)(?=\s|[.,।?]|$)|ळ/;
+function spokenLang(detected, text) {
+  let code = detected?.slice(0, 2);
+  if (code === 'hi' && (lang === 'mr' || MARATHI.test(text))) code = 'mr';
+  return code;
 }
 
 async function onTranscript(text, meta = {}) {
@@ -437,12 +484,17 @@ async function onTranscript(text, meta = {}) {
   if (!text) return;
   const speechEndAt = meta.speechEndAt || vad?.lastVoiceAt || performance.now();
   // follow the language she's actually speaking
-  const code = meta.detectedLang?.slice(0, 2);
+  const code = spokenLang(meta.detectedLang, text);
   if (code && code !== lang && LANGS[code]) {
     langVotes = langVotes.code === code ? { code, n: langVotes.n + 1 } : { code, n: 1 };
-    if (langVotes.n >= 2) setLang(code, false);
+    // a regional script is unambiguous: switch on the first sentence, so a judge who starts
+    // in Tamil hears the reply in Tamil. Hindi/English/Marathi swaps wait for a second one
+    // (Hinglish, or a single English sentence, shouldn't flip the language).
+    if (langVotes.n >= 2 || !['hi', 'en', 'mr'].includes(code)) setLang(code, false);
   } else langVotes = { code: null, n: 0 };
 
+  // kept so a failed save can put the visit back exactly as it was
+  const before = JSON.parse(JSON.stringify(agent.snapshot()));
   const res0 = agent.handle(text);
   // nothing usable (room chatter): leave the agent talking and the screen as it was
   if (!res0.say.length && !res0.changed?.length && !res0.saved) { player?.duck(false); return; }
@@ -452,14 +504,26 @@ async function onTranscript(text, meta = {}) {
   $('youSaid').classList.remove('muted');
 
   const res = res0;
-  renderForm(res.changed || []);
+  let reply = res.say.join(' ');
   if (res.saved) {
-    try { await saveRecord(res.saved); } catch (e) { toast(`Could not save: ${e.message}`); }
-    lastRendered = {};
-    renderForm();
-    refreshLists();
+    try {
+      await saveRecord(res.saved);
+      showSaved(true);
+      lastRendered = {};
+      renderForm();
+      refreshLists();
+    } catch (e) {
+      // nothing was written: put the visit back on screen and say so, never "saved"
+      agent.restore(before);
+      agent.state = 'confirm';
+      renderForm();
+      showSaved(false, e?.message || 'storage error');
+      reply = agent.L.saveFailed;
+    }
+  } else {
+    renderForm(res.changed || []);
   }
-  const reply = res.say.join(' ');
+  persistDraft();
   if (res.deferrable && talkMode === 'handsfree') {
     // acknowledge now, then give her a moment to keep dictating before the next question
     if (config.gnani && ttsCache.has(`${lang}|${agent.L.ack}`)) speak(agent.L.ack, { speechEndAt });
@@ -535,7 +599,11 @@ function connect() {
       }
     };
     ws.onclose = () => {
-      if (running) { toast('Connection lost, reconnecting…'); setTimeout(() => { if (running) connect(); }, 1500); }
+      if (!running) return;
+      // offline: wait for the connection to come back instead of retrying every second
+      if (!navigator.onLine) { window.addEventListener('online', () => { if (running) connect(); }, { once: true }); return; }
+      toast('Connection lost, reconnecting…');
+      setTimeout(() => { if (running) connect(); }, 1500);
     };
   });
 }
@@ -543,7 +611,7 @@ function connect() {
 // Browser speech recognition, used only when no Gnani key is configured.
 function startBrowserStt() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) { toast('This browser has no speech recognition. Use Chrome, or add a Gnani key on the server.'); return; }
+  if (!SR) { toast(S().noSR); return false; }
   recog = new SR();
   recog.lang = LANGS[lang].browser;
   recog.continuous = true;
@@ -557,8 +625,20 @@ function startBrowserStt() {
   };
   recog.onspeechstart = () => noteUtterance();
   recog.onend = () => { if (running) { try { recog.start(); } catch { /* already running */ } } };
-  recog.onerror = (e) => { if (e.error === 'not-allowed') toast('Microphone permission denied.'); };
+  // offline or blocked: stop instead of restarting in a loop, and point to typing
+  recog.onerror = (e) => {
+    if (e.error === 'not-allowed' || e.error === 'service-not-allowed') { stopBrowserStt(); toast(S().micDenied); } else if (e.error === 'network') { stopBrowserStt(); toast(S().sttNetwork); }
+  };
   recog.start();
+  return true;
+}
+
+function stopBrowserStt() {
+  running = false;
+  const r = recog;
+  recog = null;
+  try { r?.stop(); } catch { /* already stopped */ }
+  setStatus('off');
 }
 
 function onFrame({ pcm, rms }) {
@@ -596,6 +676,7 @@ function setBadge() {
 
 async function start() {
   if (running) return;
+  if (!navigator.onLine) { toast(S().offlineHint); showTab('visit'); $('typeText').focus(); return; }
   running = true;
   lastActivity = performance.now();
   ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -625,8 +706,10 @@ async function start() {
       await connect();
       mic = new Mic(ctx);
       await mic.start(onFrame);
-    } else {
-      startBrowserStt();
+    } else if (!startBrowserStt()) {
+      running = false;
+      setStatus('off');
+      return;
     }
   } catch (e) {
     running = false;
@@ -649,6 +732,7 @@ function setLang(l, announce = true) {
   if (recog) { recog.lang = LANGS[l].browser; try { recog.stop(); } catch { /* restarts onend */ } }
   if (running && announce) speak(agent.L.greet);
   setStatus(running ? 'listening' : 'idle');
+  applyScreenText();
   renderForm();
   refreshLists();
 }
@@ -657,13 +741,17 @@ function setLang(l, announce = true) {
 async function init() {
   try { config = await (await fetch(`/api/config${codeQuery}`)).json(); } catch { /* offline: browser fallback */ }
   setBadge();
+  $('lang').replaceChildren(...Object.entries(LANGS).map(([code, l]) => new Option(l.name, code)));
+  if (!LANGS[lang]) lang = 'hi';
   $('lang').value = lang;
   document.documentElement.lang = lang;
   $('talkMode').value = talkMode;
   $('phcNumber').value = pref.get('phc', '');
   $('callPhc').href = `tel:${phoneOnly(pref.get('phc', ''))}`;
   $('retention').value = pref.get('retentionDays', '7');
+  applyScreenText();
   renderForm();
+  $('recordList').innerHTML = `<li class="empty">${escapeHtml(S().loading)}</li>`;
   refreshLists();
   setStatus('idle');
 
@@ -689,16 +777,15 @@ async function init() {
   $('phcNumber').addEventListener('change', (e) => { const n = phoneOnly(e.target.value); e.target.value = n; pref.set('phc', n); $('callPhc').href = `tel:${n}`; });
   $('retention').addEventListener('change', (e) => pref.set('retentionDays', e.target.value));
   $('wipe').addEventListener('click', async () => {
-    if (!confirm('Delete all saved visit records from this phone?')) return;
-    await deleteAll();
+    if (!confirm(S().wipeAsk)) return;
+    try { await deleteAll(); toast(S().wiped); } catch (e) { toast(S().readFailed(e?.message || e)); }
     await refreshLists();
-    toast('All records deleted.');
   });
-  $('newVisit').addEventListener('click', () => { agent.reset(); lastRendered = {}; renderForm(); if (running) speak(agent.L.newVisit); });
+  $('newVisit').addEventListener('click', () => { agent.reset(); lastRendered = {}; $('saveStatus').hidden = true; renderForm(); persistDraft(); if (running) speak(agent.L.newVisit); });
   $('readback').addEventListener('click', () => { const t = agent.readback(); renderForm(); speak(t); });
   $('saveBtn').addEventListener('click', () => {
     if (agent.state !== 'confirm') { const t = agent.readback(); renderForm(); speak(t); return; }
-    onTranscript(lang === 'kn' ? 'ಹೌದು' : lang === 'en' ? 'yes' : 'हाँ');
+    onTranscript(YES_WORD[lang] || 'yes');
   });
   $('typeForm').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -709,7 +796,31 @@ async function init() {
   });
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
   document.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.goto)));
-  $('startVisit').addEventListener('click', () => { showTab('visit'); if (!running) start(); });
+  document.querySelectorAll('[data-start]').forEach((b) => b.addEventListener('click', () => beginVisit(b.dataset.start)));
+  // follow-up "Start visit" and saved-record "Correct" buttons are rendered into lists
+  document.addEventListener('click', (e) => {
+    const fol = e.target.closest('[data-follow]');
+    if (fol) {
+      const r = records.find((x) => x.visitId === fol.dataset.follow);
+      if (r) beginVisit(r.visitType, { beneficiaryId: r.beneficiaryId, name: r.name });
+      return;
+    }
+    const ed = e.target.closest('[data-edit]');
+    if (ed) openForEdit(ed.dataset.edit);
+  });
+  $('draftContinue').addEventListener('click', () => {
+    agent.restore(showDraftCard.draft);
+    lastRendered = {};
+    $('draftCard').hidden = true;
+    renderForm();
+    showTab('visit');
+  });
+  $('draftDiscard').addEventListener('click', async () => {
+    try { await clearDraft(); } catch { /* nothing to clear */ }
+    $('draftCard').hidden = true;
+  });
+  window.addEventListener('online', () => { setNet(); toast(S().backOnline); });
+  window.addEventListener('offline', () => { setNet(); toast(S().wentOffline); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 

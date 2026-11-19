@@ -1,10 +1,10 @@
 // Offline shell: the app opens without network; speech needs a connection.
-const CACHE = 'asha-vaani-v3';
+const CACHE = 'asha-vaani-v5';
 const ASSETS = [
   '/', '/index.html', '/styles.css', '/manifest.webmanifest', '/assets/icon.svg',
-  '/js/app.js', '/js/agent.js', '/js/audio.js', '/js/pcm-worklet.js', '/js/store.js', '/js/i18n.js',
+  '/js/app.js', '/js/agent.js', '/js/audio.js', '/js/pcm-worklet.js', '/js/store.js', '/js/i18n.js', '/js/echo.js',
   '/js/nlu/translit.js', '/js/nlu/numbers.js', '/js/nlu/dates.js', '/js/nlu/match.js', '/js/nlu/danger.js',
-  '/js/nlu/schedule.js', '/js/nlu/registry.js', '/js/nlu/parser.js',
+  '/js/nlu/schedule.js', '/js/nlu/registry.js', '/js/nlu/parser.js', '/js/nlu/regional.js',
 ];
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));

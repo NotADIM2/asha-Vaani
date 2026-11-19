@@ -1,7 +1,7 @@
 // End-to-end noisy-audio eval (needs GNANI_API_KEY in .env):
 //   eval text -> Timbre v3.0 TTS (16 kHz) -> + noise at a chosen SNR -> Prisma streaming STT
 //   (real-time cadence, same VAD settings as the app) -> agent -> score.
-// Usage: npm run eval:audio -- [snrDb=10] [limit=all] [noise=street|babble] [set=all|danger]
+// Usage: npm run eval:audio -- [snrDb=10] [limit=all] [noise=street|babble] [set=all|danger|regional|<lang>]
 //   babble = several other people talking at once (the judging room), the hardest case.
 import { VisitAgent } from '../public/js/agent.js';
 import { buildRegistry, registryKeyterms } from '../public/js/nlu/registry.js';
@@ -17,15 +17,19 @@ const NOW = new Date(...EVAL_TODAY);
 const registry = buildRegistry(NOW);
 // different voices from the app's, so the eval doesn't only hear the voice the app speaks with
 const VOICES = { hi: 'Shivani', en: 'Sohini', kn: 'Shruthi' };
+const voiceFor = (lang) => VOICES[lang] || 'Shivani';
 
 let fieldsTotal = 0; let fieldsOk = 0; let signsExpected = 0; let signsMissed = 0; let falseFlags = 0;
 const lat = [];
-const pool = SET === 'danger' ? CASES.filter((c) => c.dangers.length) : CASES;
+const REGIONAL = ['mr', 'ta', 'te', 'bn', 'gu', 'ml', 'pa'];
+const pool = SET === 'danger' ? CASES.filter((c) => c.dangers.length)
+  : SET === 'regional' ? CASES.filter((c) => REGIONAL.includes(c.lang))
+  : SET !== 'all' ? CASES.filter((c) => c.lang === SET) : CASES;
 const cases = pool.slice(0, LIMIT);
 console.log(`Noisy audio eval: ${cases.length} cases, ${NOISE} noise at SNR ${SNR_DB} dB\n`);
 for (const c of cases) {
   try {
-    const clean = await tts(c.text, c.lang, VOICES[c.lang]);
+    const clean = await tts(c.text, c.lang, voiceFor(c.lang));
     const noise = NOISE === 'babble' ? await babble(clean.length) : street(clean.length);
     const segs = await stt(addNoise(clean, noise, SNR_DB), c.lang, registryKeyterms(registry));
     const text = segs.map((s) => s.text).join(' ');

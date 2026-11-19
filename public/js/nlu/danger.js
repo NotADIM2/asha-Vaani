@@ -6,6 +6,8 @@
 //   HBNC = MoHFW Home Based Newborn Care Operational Guidelines (Revised 2014)
 //   IMNCI= MoHFW/WHO Integrated Management of Neonatal and Childhood Illness - sick young infant module
 import { makeMatcher, keySet } from './match.js';
+import { transliterate, scriptOf } from './translit.js';
+import { DANGER as MORE, NEG_WORDS, NEG_BEFORE_WORDS, ANY_WORDS, NOT_NEG_WORDS, FUSED_NEG, WORDS } from './regional.js';
 
 export const DANGER_SIGNS = [
   {
@@ -131,33 +133,61 @@ export const NUMERIC_RULES = [
   { id: 'very_low_birth_weight', source: 'HBNC', label: { hi: 'बहुत कम वज़न (1.8 किलो से कम)', en: 'very low weight (below 1.8 kg)', kn: 'ತುಂಬಾ ಕಡಿಮೆ ತೂಕ' }, test: (f, g) => g === 'newborn' && typeof f.weightKg === 'number' && f.weightKg < 1.8 },
 ];
 
+// Marathi, Tamil, Telugu, Bengali, Gujarati, Malayalam and Punjabi (regional.js)
+for (const d of [...DANGER_SIGNS, ...NUMERIC_RULES]) {
+  const more = MORE[d.id];
+  if (!more) continue;
+  if (d.label) Object.assign(d.label, more.label);
+  if (more.patterns && d.patterns) d.patterns.push(...more.patterns);
+  if (more.exclude) d.exclude = [...(d.exclude || []), ...more.exclude];
+}
+
+const fusedNeg = (t) => Boolean(FUSED_NEG[t.script]?.test(t.rom) && t.rom.length > 5);
+// A sign whose own words end in a glued "not" (ബോധമില്ല = unconscious) must not read as denied.
+for (const d of DANGER_SIGNS) {
+  d.selfNeg = d.patterns.some((p) => p.split(/[\s|]+/).some((w) => {
+    const word = w.replace(/~$/, '');
+    return FUSED_NEG[scriptOf(word)]?.test(transliterate(word).toLowerCase());
+  }));
+}
+
 const matchers = DANGER_SIGNS.map((d) => ({ sign: d, m: makeMatcher(d.patterns), ex: d.exclude ? makeMatcher(d.exclude) : null }));
 
-const NEG = keySet(['nahi', 'nahin', 'nhi', 'na', 'no', 'not', 'नहीं', 'नही', 'ना', 'illa', 'ಇಲ್ಲ', 'without', 'bina', 'बिना', 'none', 'never', 'nil']);
-const NEG_BEFORE = keySet(['no', 'not', 'without', 'bina', 'बिना', 'koi', 'कोई', 'never', 'nil', 'none', 'denies']);
+const NEG = keySet(['nahi', 'nahin', 'nhi', 'na', 'no', 'not', 'नहीं', 'नही', 'ना', 'illa', 'ಇಲ್ಲ', 'without', 'bina', 'बिना', 'none', 'never', 'nil', ...NEG_WORDS]);
+const NEG_BEFORE = keySet(['no', 'not', 'without', 'bina', 'बिना', 'koi', 'कोई', 'never', 'nil', 'none', 'denies', ...NEG_BEFORE_WORDS, ...ANY_WORDS]);
 // "bleeding nahi ruk rahi" = still bleeding; "bukhar nahi utar raha" = still fever
-const NOT_NEG_FOLLOW = keySet(['ruk', 'ruka', 'ruki', 'rukh', 'रुक', 'रुका', 'रुकी', 'रुक रहा', 'band', 'बंद', 'utar', 'उतर', 'thik', 'theek', 'ठीक', 'stop', 'stopping', 'kam', 'कम', 'thamb', 'ja', 'जा']);
-const WORD_NOT = keySet(['koi', 'कोई']);
-const ABSENT_WORDS = keySet(['normal', 'नॉर्मल', 'theek', 'ठीक', 'fine', 'sahi', 'सही', 'ok']);
+const NOT_NEG_FOLLOW = keySet(['ruk', 'ruka', 'ruki', 'rukh', 'रुक', 'रुका', 'रुकी', 'रुक रहा', 'band', 'बंद', 'utar', 'उतर', 'thik', 'theek', 'ठीक', 'stop', 'stopping', 'kam', 'कम', 'thamb', 'ja', 'जा', ...NOT_NEG_WORDS]);
+// "is / are": a sign followed by one of these was affirmed, so a later "not" is about something else
+const AFFIRM = keySet(['hai', 'है', 'hain', 'हैं', 'ide', 'ಇದೆ', 'आहे', 'இருக்கு', 'இருக்கிறது', 'உள்ளது', 'ఉంది', 'ఉన్నాయి', 'আছে', 'হচ্ছে', 'છે', 'ഉണ്ട്', 'ਹੈ', 'ਹਨ']);
+const WORD_NOT = keySet(['koi', 'कोई', ...ANY_WORDS]);
+const ABSENT_WORDS = keySet(['normal', 'नॉर्मल', 'theek', 'ठीक', 'fine', 'sahi', 'सही', 'ok', ...WORDS.absent]);
 
 function isNegated(tokens, m, sign) {
   if (sign.negationInside) return false;
-  // after: "bleeding nahi hai", "bukhar nahi", "jhatke nahi aaye"
+  // glued on: "പനിയില്ല" (no fever), "ಜ್ವರವಿಲ್ಲ"
+  const last = tokens[m.end - 1];
+  if (!sign.selfNeg && m.end - m.start === 1 && fusedNeg(last) && !NOT_NEG_FOLLOW.has(last)) return true;
+  // after: "bleeding nahi hai", "bukhar nahi", "jhatke nahi aaye", "காய்ச்சல் வரவில்லை".
+  // Not across a comma or an "is" ("बुखार है, दूध नहीं पी रहा" still has fever).
   for (let q = m.end; q < Math.min(tokens.length, m.end + 3); q++) {
-    if (NEG.has(tokens[q].key)) {
-      // "ruk nahi rahi" / "nahi ruk rahi" negate the stopping, not the sign
+    if (tokens[q - 1].clauseEnd || AFFIRM.has(tokens[q - 1])) break;
+    const fused = fusedNeg(tokens[q]);
+    if (NEG.has(tokens[q]) || fused) {
+      // "ruk nahi rahi" / "nahi ruk rahi" / "నిలవడం లేదు" negate the stopping, not the sign
+      if (fused && NOT_NEG_FOLLOW.has(tokens[q])) return false;
       const nxt = tokens[q + 1];
-      if (nxt && NOT_NEG_FOLLOW.has(nxt.key)) return false;
-      for (let r = m.end; r < q; r++) if (NOT_NEG_FOLLOW.has(tokens[r].key)) return false;
+      if (nxt && NOT_NEG_FOLLOW.has(nxt)) return false;
+      for (let r = m.end; r < q; r++) if (NOT_NEG_FOLLOW.has(tokens[r])) return false;
       return true;
     }
   }
   // before: "no bleeding", "koi bleeding nahi", "bina bukhar"
   for (let q = Math.max(0, m.start - 2); q < m.start; q++) {
-    if (NEG_BEFORE.has(tokens[q].key) && !WORD_NOT.has(tokens[q].key)) return true;
-    if (WORD_NOT.has(tokens[q].key)) {
+    if (tokens.slice(q, m.start).some((t) => t.clauseEnd)) continue;
+    if (NEG_BEFORE.has(tokens[q]) && !WORD_NOT.has(tokens[q])) return true;
+    if (WORD_NOT.has(tokens[q])) {
       // "koi" alone is not negation ("koi bleeding?"), it needs a later nahi
-      for (let r = m.end; r < Math.min(tokens.length, m.end + 4); r++) if (NEG.has(tokens[r].key)) return true;
+      for (let r = m.end; r < Math.min(tokens.length, m.end + 4); r++) if (NEG.has(tokens[r]) || fusedNeg(tokens[r])) return true;
     }
   }
   return false;

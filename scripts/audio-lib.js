@@ -5,10 +5,10 @@ import WebSocket from 'ws';
 import { openStt } from '../server/gnani.js';
 
 export const KEY = process.env.GNANI_API_KEY;
-const TTS_LANG = { hi: 'hi-IN', en: 'en-IN', kn: 'kn-IN' };
+const TTS_LANG = Object.fromEntries(['hi', 'en', 'kn', 'mr', 'ta', 'te', 'bn', 'gu', 'ml', 'pa'].map((l) => [l, `${l}-IN`]));
 // The live API takes exactly one locale per stream; Prisma v3.0 still transcribes English
 // words inside Hindi or Kannada speech (code-mix) with a single locale.
-const STT_LANG = { hi: 'hi-IN', en: 'en-IN', kn: 'kn-IN' };
+const STT_LANG = TTS_LANG;
 const RATE = 16000;
 
 export function tts(text, lang, voice) {

@@ -1,7 +1,8 @@
 // Spoken numbers in Hindi, English and Kannada (any script), plus digits.
 // "teen sau chaalis" -> 340, "do point aath" -> 2.8, "dhai" -> 2.5,
 // "ek zero chaar do" -> digit string "1042", "ippattondu" -> 21.
-import { transliterate, phon } from './translit.js';
+import { transliterate, phon, scriptOf } from './translit.js';
+import { NUMBER_WORDS, NUMBER_MULTIPLIERS, POINT_WORDS } from './regional.js';
 
 const HINDI_1_99 = (
   'एक दो तीन चार पांच छह सात आठ नौ दस ग्यारह बारह तेरह चौदह पंद्रह सोलह सत्रह अठारह उन्नीस बीस ' +
@@ -94,21 +95,38 @@ for (const [tens, stem] of Object.entries(KANNADA_TENS)) {
 // Kannada script digits words come through transliteration (ಒಂದು -> ondu etc.)
 ['ಒಂದು', 'ಎರಡು', 'ಮೂರು', 'ನಾಲ್ಕು', 'ಐದು', 'ಆರು', 'ಏಳು', 'ಎಂಟು', 'ಒಂಬತ್ತು', 'ಹತ್ತು'].forEach((w, i) => addWord(w, i + 1));
 addWord('ಸೊನ್ನೆ', 0);
+// Marathi (Devanagari) joins the shared table; the other scripts get their own, so a
+// Malayalam "നാല്" (4) never turns Hindi "नाल" (umbilical cord) into a number.
+const regionalWords = new Map();
+for (const { units, more } of Object.values(NUMBER_WORDS)) {
+  const pairs = [...units.map((w, i) => [w, i]), ...Object.entries(more).flatMap(([v, ws]) => ws.map((w) => [w, Number(v)]))];
+  for (const [w, v] of pairs) {
+    if (!w) continue;
+    const sc = scriptOf(w);
+    if (sc === 'deva') addWord(w, v);
+    else regionalWords.set(`${sc}:${phon(romKey(w))}`, v);
+  }
+}
 const ENGLISH_TENS = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90 };
 
 const multExact = new Map();
 for (const [v, ws] of Object.entries(MULTIPLIERS)) ws.forEach((w) => multExact.set(phon(romKey(w)), Number(v)));
 for (const [v, ws] of Object.entries(MULT_DEVA)) ws.forEach((w) => multExact.set(phon(romKey(w)), Number(v)));
+for (const [v, ws] of Object.entries(NUMBER_MULTIPLIERS)) ws.forEach((w) => { const k = phon(romKey(w)); if (!multExact.has(k)) multExact.set(k, Number(v)); });
 const fracMap = new Map();
 for (const [v, ws] of Object.entries(FRACTIONS)) ws.forEach((w) => fracMap.set(phon(romKey(w)), Number(v)));
 const modMap = new Map();
 for (const [v, ws] of Object.entries(MODIFIERS)) ws.forEach((w) => modMap.set(phon(romKey(w)), Number(v)));
-const pointSet = new Set(POINT.map((w) => phon(romKey(w))));
+const pointSet = new Set([...POINT, ...POINT_WORDS].map((w) => phon(romKey(w))));
 const doubleSet = new Set(DOUBLE.map((w) => phon(romKey(w))));
 const tripleSet = new Set(TRIPLE.map((w) => phon(romKey(w))));
 
 export function wordValue(tok) {
   if (tok.isDigits) return null;
+  if (tok.script && tok.script !== 'latn' && tok.script !== 'deva') {
+    const v = regionalWords.get(`${tok.script}:${tok.key}`);
+    if (v !== undefined) return v;
+  }
   if (exact.has(tok.rom)) return exact.get(tok.rom);
   if (fuzzy.has(tok.key)) return fuzzy.get(tok.key);
   return null;
@@ -282,7 +300,12 @@ function intWords(n, lang) {
 
 const POINT_WORD = { hi: 'दशमलव', en: 'point', kn: 'ಪಾಯಿಂಟ್' };
 
+// Hindi, English and Kannada are spelled out here. The other languages keep digits:
+// Timbre reads "52" in the voice's language, and the echo guard compares digits directly.
+const SPELLED = new Set(['hi', 'en', 'kn']);
+
 export function numberToWords(value, lang = 'hi') {
+  if (!SPELLED.has(lang)) return String(value);
   const neg = value < 0;
   const abs = Math.abs(value);
   const [intPart, fracPart] = String(abs).split('.');
@@ -293,5 +316,6 @@ export function numberToWords(value, lang = 'hi') {
 
 // IDs are read digit by digit so a wrong digit is easy to hear.
 export function digitsToWords(str, lang = 'hi') {
+  if (!SPELLED.has(lang)) return String(str).split('').filter((c) => /\d/.test(c)).join(' ');
   return String(str).split('').filter((c) => /\d/.test(c)).map((d) => intWords(Number(d), lang)).join(' ');
 }

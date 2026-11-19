@@ -121,20 +121,38 @@ export function phon(word) {
   return s;
 }
 
-// Text -> tokens with original, romanised and phonetic forms.
+// Script of a word: the first Indic block it uses, else 'latn'.
+export function scriptOf(word) {
+  for (const ch of word) {
+    const blk = blockOf(ch.codePointAt(0));
+    if (blk) return blk[1];
+  }
+  return 'latn';
+}
+
+// Text -> tokens with original, romanised and phonetic forms, plus the script each word
+// was written in (so a Malayalam word can't match a Hindi word that romanises the same).
 export function tokenize(text) {
-  const rom = transliterate(text).toLowerCase();
   const tokens = [];
   const re = /\d+(?:[.,]\d+)*(?:\/\d+)?|[a-zÀ-ɏ]+(?:'[a-z]+)?|\?/g;
-  let m;
-  while ((m = re.exec(rom))) {
-    const raw = m[0];
-    if (/^\d/.test(raw)) {
-      const clean = raw.replace(/,(?=\d{3}\b)/g, '');
-      tokens.push({ rom: clean, key: clean, isDigits: true });
-    } else {
-      tokens.push({ rom: raw, key: phon(raw), isDigits: false });
+  for (const word of text.normalize('NFC').split(/\s+/)) {
+    if (!word) continue;
+    const script = scriptOf(word);
+    const rom = transliterate(word).toLowerCase();
+    let m;
+    re.lastIndex = 0;
+    const before = tokens.length;
+    while ((m = re.exec(rom))) {
+      const raw = m[0];
+      if (/^\d/.test(raw)) {
+        const clean = raw.replace(/,(?=\d{3})/g, '');
+        tokens.push({ rom: clean, key: clean, isDigits: true, script });
+      } else {
+        tokens.push({ rom: raw, key: phon(raw), isDigits: false, script });
+      }
     }
+    // a comma or full stop after the word ends a clause ("बुखार है, दूध नहीं पी रहा")
+    if (tokens.length > before && /[,.;:!।॥]$/.test(word)) tokens[tokens.length - 1].clauseEnd = true;
   }
   return tokens;
 }

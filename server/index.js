@@ -27,17 +27,16 @@ const STT_FORMAT = process.env.STT_FORMAT || 'transcribe';
 const TTS_MODEL = process.env.TTS_MODEL || 'timbre-v3.0';
 const LLM_ENABLED = process.env.LLM_ENABLED !== '0';
 const LLM_MODEL = process.env.LLM_MODEL || 'evon-v3.5';
+// All ten Prisma / Timbre languages. Prisma writes numbers as digits in every one of them.
+const LANGS = ['hi', 'en', 'kn', 'mr', 'ta', 'te', 'bn', 'gu', 'ml', 'pa'];
+const okLang = (l) => LANGS.includes(l);
 // Every Timbre v3.0 voice speaks all 10 languages. Sunaina ("grounded and natural, rural
-// outreach") is recommended for Hindi, English and Kannada, so the agent keeps one voice
-// when the ASHA switches language.
-const VOICES = {
-  hi: process.env.TTS_VOICE_HI || 'Sunaina',
-  en: process.env.TTS_VOICE_EN || 'Sunaina',
-  kn: process.env.TTS_VOICE_KN || 'Sunaina',
-};
+// outreach") is the default everywhere, so the agent keeps one voice when the ASHA
+// switches language. TTS_VOICE_TA etc. override per language.
+const VOICES = Object.fromEntries(LANGS.map((l) => [l, process.env[`TTS_VOICE_${l.toUpperCase()}`] || 'Sunaina']));
 // The live API takes exactly one locale per stream; Prisma v3.0 still transcribes English
-// words inside Hindi or Kannada speech (code-mix) with a single locale.
-const STT_LANG = { hi: 'hi-IN', en: 'en-IN', kn: 'kn-IN' };
+// words inside any Indic speech (code-mix), and follows the speaker into another language.
+const STT_LANG = Object.fromEntries(LANGS.map((l) => [l, `${l}-IN`]));
 
 // ---- credit guard -------------------------------------------------------------------
 // Hard daily ceiling across all visitors (India date), kept in usage.json so a restart
@@ -84,7 +83,7 @@ function gnaniAllowed(socketAddr, code) {
   if (!KEY || !budgetLeft()) return false;
   return LOOPBACK.has(socketAddr) || (Boolean(ACCESS_CODE) && codeOk(code));
 }
-const TTS_LANG = { hi: 'hi-IN', en: 'en-IN', kn: 'kn-IN' };
+const TTS_LANG = STT_LANG;
 
 // Per-key sliding-window limiter. The deployed link is public, so every route that spends
 // Gnani credits is capped per IP and per connection.
@@ -133,7 +132,7 @@ app.post('/api/extract', (req, res) => {
   if (!LLM_ENABLED || !gnaniAllowed(req.socket.remoteAddress, req.get('x-access-code'))) return res.status(403).json({ error: 'llm disabled' });
   if (!extractLimit(req.ip) || llmQueued >= 5 || !spend('llm', 1)) return res.status(429).json({ error: 'busy' });
   const text = String(req.body?.text || '').slice(0, 1500);
-  const lang = ['hi', 'en', 'kn'].includes(req.body?.lang) ? req.body.lang : 'hi';
+  const lang = okLang(req.body?.lang) ? req.body.lang : 'hi';
   if (!text.trim()) return res.status(400).json({ error: 'empty' });
   llmQueued++;
   llmChain = llmChain.then(async () => {
@@ -224,7 +223,7 @@ wss.on('connection', (client, req) => {
     switch (msg.type) {
       case 'start':
       case 'lang': {
-        lang = ['hi', 'en', 'kn'].includes(msg.lang) ? msg.lang : 'hi';
+        lang = okLang(msg.lang) ? msg.lang : 'hi';
         if (Array.isArray(msg.keyterms)) keyterms = msg.keyterms.filter((k) => typeof k === 'string' && k.length < 60).slice(0, 200);
         if (stt) { const old = stt; stt = null; old.close(); }
         connectStt();
@@ -237,7 +236,7 @@ wss.on('connection', (client, req) => {
       case 'say': {
         const id = Number(msg.id) >>> 0;
         const text = String(msg.text || '').slice(0, 1200);
-        const l = ['hi', 'en', 'kn'].includes(msg.lang) ? msg.lang : lang;
+        const l = okLang(msg.lang) ? msg.lang : lang;
         if (!tts || !text) { send({ type: 'tts_error', id, message: 'tts unavailable' }); break; }
         if (!sayLimit('say') || ttsChars + text.length > 60_000 || !spend('ttsChars', text.length)) { send({ type: 'tts_error', id, message: 'rate limited' }); break; }
         ttsChars += text.length;
