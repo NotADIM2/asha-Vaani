@@ -1,18 +1,35 @@
 // Mic capture, a small energy VAD (for barge-in and fast endpointing) and a gapless
 // streaming PCM player.
 
+const workletReady = new WeakMap(); // AudioContext -> addModule promise (a processor can be registered once)
+
 export class Mic {
   constructor(ctx) {
     this.ctx = ctx;
     this.stream = null;
     this.node = null;
+    this.label = '';
+    this.fellBack = false;
+    this.onEnded = null;
   }
 
-  async start(onFrame) {
-    this.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
-    });
-    await this.ctx.audioWorklet.addModule('/js/pcm-worklet.js');
+  // deviceId '' = the browser default. If the chosen mic is gone (earbuds out of range),
+  // fall back to the default instead of failing the visit.
+  async start(onFrame, deviceId = '') {
+    const base = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: deviceId ? { ...base, deviceId: { exact: deviceId } } : base });
+    } catch (e) {
+      if (!deviceId || !['OverconstrainedError', 'NotFoundError', 'NotReadableError', 'AbortError'].includes(e.name)) throw e;
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: base });
+      this.fellBack = true;
+    }
+    const track = this.stream.getAudioTracks()[0];
+    this.label = track?.label || '';
+    // a Bluetooth headset that disconnects or switches profile ends the track
+    track?.addEventListener('ended', () => this.onEnded?.());
+    if (!workletReady.has(this.ctx)) workletReady.set(this.ctx, this.ctx.audioWorklet.addModule('/js/pcm-worklet.js'));
+    await workletReady.get(this.ctx);
     const src = this.ctx.createMediaStreamSource(this.stream);
     this.node = new AudioWorkletNode(this.ctx, 'pcm-capture');
     this.node.port.onmessage = (e) => onFrame(e.data);
@@ -24,11 +41,24 @@ export class Mic {
   }
 
   stop() {
+    this.onEnded = null;
     this.stream?.getTracks().forEach((t) => t.stop());
-    this.node?.disconnect();
+    if (this.node) { this.node.port.onmessage = null; this.node.disconnect(); }
     this.stream = null;
     this.node = null;
   }
+}
+
+export async function listMics() {
+  try { return (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'audioinput'); } catch { return []; }
+}
+
+// Loudness of one mic over a few seconds, judged on the same scale as the VAD (RMS of
+// 16 kHz frames): silent = nothing is arriving, quiet = below the VAD's speech floor.
+export function judgeLevel(peak) {
+  if (peak < 0.002) return 'silent';
+  if (peak < 0.02) return 'quiet';
+  return 'ok';
 }
 
 // Energy VAD on 32 ms frames, used for ducking, fast endpointing and the idle pause (never

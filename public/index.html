@@ -77,6 +77,7 @@
         <div class="talk-info">
           <div id="status" class="status">Tap the mic to start</div>
           <div class="meter"><span id="level"></span></div>
+          <div id="micName" class="mic-name"></div>
           <div class="metrics">
             <span title="Time from the end of your speech to the agent's first audio">first audio <b id="ttfa">–</b></span>
             <span title="Median over this session">p50 <b id="ttfaMed">–</b></span>
@@ -138,6 +139,15 @@
             <option value="ptt" data-t="ptt">Hold to talk</option>
           </select>
         </label>
+        <label class="field"><span data-t="micLabel">Microphone</span>
+          <select id="micSelect"></select>
+          <small class="muted" data-t="micNote"></small>
+        </label>
+        <div class="mic-test">
+          <button id="micTest" class="btn" type="button" data-t="micTestBtn">Test microphone</button>
+          <div class="meter"><span id="micTestLevel"></span></div>
+          <p id="micTestResult" class="mic-result" role="status" aria-live="polite"></p>
+        </div>
         <label class="field"><span data-t="phc">PHC phone number</span>
           <input id="phcNumber" inputmode="tel" placeholder="0800000000">
         </label>

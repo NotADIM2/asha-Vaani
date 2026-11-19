@@ -94,3 +94,29 @@ test('ordinals: agent said "दूसरा", STT wrote "2nd" -> still echo', ()
   const said = 'बाकी टीके: टी डी दूसरा। अगली विज़िट तीन दिसंबर।';
   assert.equal(stripEcho('बाकी टीके TD 2nd अगली विजिट 3 December', [said], { playing: true }).echo, true);
 });
+
+// The mic worklet, run outside the browser at each device rate. A Bluetooth headset in
+// hands-free mode can put the AudioContext at 8 kHz; that once reached Prisma at double speed.
+test('mic capture is 16 kHz at the right pitch for 8, 16, 44.1 and 48 kHz devices', async () => {
+  const fs = await import('node:fs');
+  const vm = await import('node:vm');
+  const src = fs.readFileSync(new URL('../public/js/pcm-worklet.js', import.meta.url), 'utf8');
+  for (const rate of [8000, 16000, 44100, 48000]) {
+    let Proc;
+    const out = [];
+    vm.runInNewContext(src, {
+      sampleRate: rate,
+      AudioWorkletProcessor: class { constructor() { this.port = { postMessage: (m) => out.push(...new Int16Array(m.pcm)) }; } },
+      registerProcessor: (_n, c) => { Proc = c; },
+    });
+    const p = new Proc();
+    for (let i = 0; i < rate; i += 128) {
+      p.process([[Float32Array.from({ length: Math.min(128, rate - i) }, (_, k) => 0.5 * Math.sin(2 * Math.PI * 440 * (i + k) / rate))]]);
+    }
+    assert.ok(out.length > 15300 && out.length <= 16000, `${rate}: ${out.length} samples per second`);
+    let zc = 0;
+    for (let i = 1; i < out.length; i++) if ((out[i - 1] < 0) !== (out[i] < 0)) zc++;
+    const hz = zc / 2 / (out.length / 16000);
+    assert.ok(Math.abs(hz - 440) < 10, `${rate}: tone came out at ${hz.toFixed(0)} Hz`);
+  }
+});

@@ -2,7 +2,7 @@
 // and a live time-to-first-audio readout. Screens: start, visit, follow-ups, records, settings.
 import { VisitAgent } from './agent.js';
 import { buildRegistry, registryKeyterms } from './nlu/registry.js';
-import { Mic, Vad, Player } from './audio.js';
+import { Mic, Vad, Player, listMics, judgeLevel } from './audio.js';
 import { saveRecord, listRecords, deleteAll, followupsFrom, summarize, saveDraft, loadDraft, clearDraft } from './store.js';
 import { dangerLabel } from './nlu/danger.js';
 import { iso } from './nlu/dates.js';
@@ -64,6 +64,11 @@ const recentSaid = [];
 let utt = null;
 let duckTimer = null;
 let commitTimer = null;
+// Prisma failing repeatedly ("Transcription failed or audio unclear" on clean speech is a
+// service-side failure): listen with the browser's recognition instead, keep the Gnani voice.
+let sttFails = 0;
+let sttWorked = false; // Prisma returned at least one transcript this session
+let sttFallback = false;
 
 // ---------------- UI helpers ----------------
 const S = () => screenText(lang);
@@ -347,6 +352,102 @@ function showSaved(ok, msg) {
   el.textContent = ok ? S().savedLocal(fmtTime(Date.now())) : S().saveFailed(msg);
 }
 
+// ---------------- microphone choice and health ----------------
+// The browser's default mic is often not the one in use (Bluetooth earbuds show up as
+// "Headphones" without a mic and "Headset … Hands-Free" with one), so she can pick it, test
+// it without spending credits, and is told when the chosen mic is silent.
+const micId = () => pref.get('micId', '');
+let micStats = { frames: 0, peak: 0, warned: false };
+
+async function fillMicSelect() {
+  const sel = $('micSelect');
+  const mics = await listMics();
+  const cur = micId();
+  const opts = [new Option(S().micDefault, '')];
+  mics.filter((m) => m.deviceId && m.deviceId !== 'default' && m.deviceId !== 'communications')
+    .forEach((m, i) => opts.push(new Option(m.label || `${S().micLabel} ${i + 1}`, m.deviceId)));
+  sel.replaceChildren(...opts);
+  sel.value = opts.some((o) => o.value === cur) ? cur : '';
+}
+
+function showMicName() {
+  $('micName').textContent = mic?.label ? S().usingMic(mic.label) : '';
+}
+
+// Called for every captured frame while a visit is running.
+function watchMic(rms) {
+  const st = micStats;
+  st.frames++;
+  if (rms > st.peak) st.peak = rms;
+  // ~4 s after the mic opened: nothing at all, or far below speech level
+  if (st.frames === 125 && !st.warned) {
+    const v = judgeLevel(st.peak);
+    if (v !== 'ok') { st.warned = true; toast(v === 'silent' ? S().micSilent(mic?.label || S().micDefault) : S().micQuiet(mic?.label || S().micDefault), 7000); }
+  }
+}
+
+async function openMic() {
+  mic = new Mic(ctx);
+  mic.onEnded = () => restartMic();
+  await mic.start(onFrame, micId());
+  micStats = { frames: 0, peak: 0, warned: false };
+  if (mic.fellBack) toast(S().micFallback);
+  showMicName();
+}
+
+// Earbuds connected, disconnected or switched profile: reopen the mic on what is there now.
+let restartTimer = null;
+function restartMic() {
+  clearTimeout(restartTimer);
+  restartTimer = setTimeout(async () => {
+    if (!running || !config.gnani || !mic) return;
+    const before = mic.label;
+    mic.stop();
+    try {
+      if (ctx.state !== 'running') await ctx.resume();
+      await openMic();
+      if (mic.label && mic.label !== before) toast(S().micSwitched(mic.label));
+    } catch (e) { toast(`Microphone error: ${e.message}`); }
+  }, 700);
+}
+
+// Settings test: loudness only, nothing is sent to Gnani.
+async function testMic() {
+  const out = $('micTestResult');
+  const btn = $('micTest');
+  btn.disabled = true;
+  out.className = 'mic-result';
+  out.textContent = S().micTesting;
+  let tctx = null;
+  let tmic = null;
+  try {
+    tctx = new (window.AudioContext || window.webkitAudioContext)();
+    await tctx.resume();
+    tmic = new Mic(tctx);
+    let peak = 0;
+    await tmic.start(({ rms }) => {
+      if (rms > peak) peak = rms;
+      $('micTestLevel').style.width = `${Math.min(100, Math.round(rms * 900))}%`;
+    }, micId());
+    await new Promise((r) => setTimeout(r, 5000));
+    const label = tmic.label || S().micDefault;
+    const v = judgeLevel(peak);
+    out.className = `mic-result ${v === 'ok' ? 'ok' : 'bad'}`;
+    const verdict = v === 'ok' ? S().micOk(label) : v === 'quiet' ? S().micQuietRes(label) : S().micSilentRes(label);
+    const rate = tmic.stream?.getAudioTracks()[0]?.getSettings?.().sampleRate || tctx.sampleRate;
+    out.textContent = `${verdict} ${S().micRate(Math.round(rate / 100) / 10)}${rate <= 16000 ? ` ${S().micNarrow}` : ''}`;
+    await fillMicSelect(); // labels appear once permission is granted
+  } catch (e) {
+    out.className = 'mic-result bad';
+    out.textContent = e.name === 'NotAllowedError' ? S().micDenied : `Microphone error: ${e.message}`;
+  } finally {
+    tmic?.stop();
+    tctx?.close();
+    $('micTestLevel').style.width = '0%';
+    btn.disabled = false;
+  }
+}
+
 // ---------------- speaking ----------------
 function recordTtfa(firstAudioAt, speechEndAt) {
   if (!speechEndAt) return;
@@ -579,11 +680,22 @@ function connect() {
           const key = m.segment_id || m.utterance_id || m.text;
           if (key && key === lastFinalKey) break;
           lastFinalKey = key;
+          sttFails = 0;
+          if (m.text) sttWorked = true;
           heard(m.text, { detectedLang: m.detected_language_code });
           if (!player?.playing) setStatus('listening');
           break;
         }
-        case 'stt_error': toast(`Speech service: ${m.message}`); break;
+        case 'stt_error': {
+          // never worked yet: switch at once; worked before: allow one bad segment
+          if (/unclear|transcription/i.test(m.message || '') && ++sttFails >= (sttWorked ? 2 : 1) && !sttFallback) { useBrowserListening(); break; }
+          // Prisma says this when a segment can't be made out; say what to do, at most every 15 s
+          const now = Date.now();
+          if (now - (onTranscript.lastSttErr || 0) < 15000) break;
+          onTranscript.lastSttErr = now;
+          toast(/unclear|transcription error/i.test(m.message || '') ? S().sttUnclear : `Speech service: ${m.message}`, 6000);
+          break;
+        }
         case 'tts_end': {
           const c = caching.get(m.id);
           if (c) { if (c.chunks.length) ttsCache.set(c.key, c.chunks); caching.delete(m.id); }
@@ -643,8 +755,9 @@ function stopBrowserStt() {
 
 function onFrame({ pcm, rms }) {
   $('level').style.width = `${Math.min(100, Math.round(rms * 900))}%`;
+  watchMic(rms);
   vad.push(rms, player?.playing || false);
-  if (!config.gnani || ws?.readyState !== 1 || paused) return;
+  if (!config.gnani || ws?.readyState !== 1 || paused || sttFallback) return;
   if (talkMode === 'ptt' && !pttDown) return;
   const now = performance.now();
   if (vad.speaking || player?.playing || pttDown) lastActivity = now;
@@ -655,6 +768,12 @@ function onFrame({ pcm, rms }) {
     return;
   }
   ws.send(pcm);
+}
+
+function useBrowserListening() {
+  sttFallback = true;
+  toast(S().sttFallback, 8000);
+  if (running && !recog) startBrowserStt();
 }
 
 // Daily credit cap reached (or access lost): carry on with the browser's free voice.
@@ -681,6 +800,8 @@ async function start() {
   lastActivity = performance.now();
   ctx = new (window.AudioContext || window.webkitAudioContext)();
   await ctx.resume();
+  // a Bluetooth profile switch can suspend the context; keep it running during a visit
+  ctx.onstatechange = () => { if (running && ctx.state === 'suspended') ctx.resume().catch(() => {}); };
   player = new Player(ctx, config.ttsSampleRate || 24000);
   player.onIdle = () => { speakingUntil = performance.now(); if (running) setStatus('listening'); };
   vad = new Vad({
@@ -704,8 +825,7 @@ async function start() {
   try {
     if (config.gnani) {
       await connect();
-      mic = new Mic(ctx);
-      await mic.start(onFrame);
+      await openMic();
     } else if (!startBrowserStt()) {
       running = false;
       setStatus('off');
@@ -733,6 +853,8 @@ function setLang(l, announce = true) {
   if (running && announce) speak(agent.L.greet);
   setStatus(running ? 'listening' : 'idle');
   applyScreenText();
+  fillMicSelect();
+  showMicName();
   renderForm();
   refreshLists();
 }
@@ -747,6 +869,10 @@ async function init() {
   document.documentElement.lang = lang;
   $('talkMode').value = talkMode;
   $('phcNumber').value = pref.get('phc', '');
+  fillMicSelect();
+  $('micSelect').addEventListener('change', (e) => { pref.set('micId', e.target.value); $('micTestResult').textContent = ''; restartMic(); });
+  $('micTest').addEventListener('click', testMic);
+  navigator.mediaDevices?.addEventListener?.('devicechange', () => { fillMicSelect(); restartMic(); });
   $('callPhc').href = `tel:${phoneOnly(pref.get('phc', ''))}`;
   $('retention').value = pref.get('retentionDays', '7');
   applyScreenText();
