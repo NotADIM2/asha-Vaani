@@ -14,7 +14,7 @@ const K = (...w) => keySet(w);
 // ---------- field keywords ----------
 const WEIGHT_KW = K('vajan', 'wajan', 'wazan', 'vazan', 'weight', 'वजन', 'वज़न', 'वेट', 'ತೂಕ', 'tooka', 'tuka', 'எடை', 'బరువు', 'ওজন');
 const KG = K('kilo', 'kilos', 'kg', 'kgs', 'kilogram', 'kilograms', 'किलो', 'किग्रा', 'केजी', 'ಕೆಜಿ', 'ಕಿಲೋ', 'கிலோ', 'కిలో', 'কেজি');
-const GRAM = K('gram', 'grams', 'gm', 'gms', 'ग्राम', 'ಗ್ರಾಂ', 'கிராம்', 'గ్రాము', 'গ্রাম');
+const GRAM = K('gram', 'grams', 'gm', 'gms', 'g', 'ग्राम', 'ग्रा', 'ಗ್ರಾಂ', 'கிராம்', 'గ్రాము', 'গ্রাম');
 const ID_KW = K('id', 'आईडी', 'ಐಡಿ', 'aidi', 'number', 'नंबर', 'nambar', 'sankhya', 'संख्या', 'beneficiary', 'rch', 'mcts', 'ಸಂಖ್ಯೆ', 'नम्बर');
 const BP_KW = M('bp', 'बीपी', 'ಬಿಪಿ', 'blood pressure', 'ब्लड प्रेशर', 'रक्तचाप', 'raktchap');
 const BP_SEP = K('by', 'upar', 'उपर', 'ऊपर', 'over', 'slash', 'बाय', 'पर', 'aur', 'and', 'by', 'बटा', 'bata');

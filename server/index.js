@@ -148,9 +148,8 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ error: status === 413 ? 'too large' : 'bad request' });
 });
 
-const server = http.createServer(app);
 const wss = new WebSocketServer({
-  server,
+  noServer: true,
   path: '/ws',
   maxPayload: 64 * 1024,
   // Only our own page may open the socket from a browser (blocks other sites from
@@ -279,8 +278,25 @@ wss.on('connection', (client, req) => {
   client.on('error', () => {});
 });
 
-server.listen(PORT, HOST, () => {
+// "localhost" may resolve to IPv6 (::1) or IPv4 (127.0.0.1) depending on the browser, so a
+// local run listens on both loopback addresses; both are still this computer only.
+const hosts = HOST === '127.0.0.1' ? ['127.0.0.1', '::1'] : [HOST];
+for (const h of hosts) {
+  const srv = http.createServer(app);
+  srv.on('upgrade', (req, socket, head) => {
+    if (!wss.shouldHandle(req)) { socket.destroy(); return; }
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
+  });
+  srv.on('error', (e) => {
+    if (h === '::1') return; // no IPv6 on this machine: IPv4 alone is fine
+    console.error(`Cannot listen on ${h}:${PORT}: ${e.message}`);
+    process.exit(1);
+  });
+  srv.listen(PORT, h, h === hosts[0] ? announce : undefined);
+}
+
+function announce() {
   const mode = !KEY ? 'OFF: browser speech fallback' : ACCESS_CODE ? 'enabled for this computer + visitors with the access code' : 'enabled for this computer only';
-  console.log(`ASHA Vaani on http://localhost:${PORT}  (Gnani ${mode}; listening on ${HOST})`);
+  console.log(`ASHA Vaani on http://localhost:${PORT}  (Gnani ${mode}; listening on ${hosts.join(' + ')})`);
   console.log(`Daily credit guard: ${Math.round(usage.sttSec / 60)}/${BUDGET.sttSec / 60} STT min, ${usage.ttsChars}/${BUDGET.ttsChars} TTS chars, ${usage.llm}/${BUDGET.llm} LLM calls used today`);
-});
+}

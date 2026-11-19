@@ -61,7 +61,7 @@ export function fromIso(s) {
   return new Date(y, m - 1, d);
 }
 
-function monthIndex(tok) {
+export function monthIndex(tok) {
   if (!tok) return -1;
   return MONTHS.findIndex((s) => s.has(tok.key));
 }

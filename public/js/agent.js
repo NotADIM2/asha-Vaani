@@ -189,9 +189,18 @@ export class VisitAgent {
     // beneficiary
     if (x.beneficiaryId) {
       const b = this.registry.find((p) => p.id === x.beneficiaryId);
-      if (b) { this.setBeneficiary(b, changed); this.pendingMatches = null; } else if (f.beneficiaryId !== x.beneficiaryId) {
+      if (b) { this.setBeneficiary(b, changed); this.pendingMatches = null; } else if (f.beneficiary && !r.intent.newVisit) {
+        // A registered person is already set and this ID is not in the register: far more
+        // likely a mis-heard number (noise, echo) than a new person. Keep her and ask again.
+        this.unknownId = x.beneficiaryId;
+      } else if (f.beneficiaryId !== x.beneficiaryId) {
         f.beneficiary = null; f.beneficiaryId = x.beneficiaryId; f.isNew = true; changed.push('beneficiary');
       }
+    } else if (x.beneficiaryMatches && f.beneficiary && !x.beneficiaryMatches.some((b) => b.id === f.beneficiary.id) && !r.intent.no && !r.intent.newVisit) {
+      // A different name alone (no ID, no "nahi/galat") once the person is known is far more
+      // often room chatter picked up by STT than a real change: keep the person. A real
+      // change is said as "nahi, Sunita Devi" or with the ID.
+      this.heardChatter = true;
     } else if (x.beneficiaryMatches) {
       const cand = this.narrow(x.beneficiaryMatches, r);
       if (cand.length === 1) { this.setBeneficiary(cand[0], changed); this.pendingMatches = null; } else if (!f.beneficiary || !cand.some((b) => b.id === f.beneficiary.id)) {
@@ -382,7 +391,19 @@ export class VisitAgent {
       this.expect = null;
       changed.push('weightKg', 'weightChecked');
     }
+    this.heardChatter = false;
+    this.unknownId = null;
     this.applyFields(r, changed);
+    if (this.unknownId) {
+      this.state = 'ask';
+      this.expect = 'beneficiary';
+      return this.out([L.askCorrectId], { changed });
+    }
+    // nothing but a stray name from the room: stay quiet rather than answer the chatter
+    if (this.heardChatter && !changed.length && !r.dangers.present.length && !Object.keys(r.intent).length) {
+      f.transcript.pop();
+      return this.out([], { changed });
+    }
     if (changed.includes('weightKg') && !changed.includes('weightChecked') && !this.plausibleWeight(f.weightKg)) {
       this.pendingWeight = f.weightKg;
       f.weightKg = prevWeight;

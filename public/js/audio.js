@@ -31,15 +31,22 @@ export class Mic {
   }
 }
 
-// Adaptive-threshold VAD on 32 ms frames. While the agent is talking the threshold is
-// raised so leftover echo doesn't count as the user interrupting.
+// Energy VAD on 32 ms frames, used for ducking, fast endpointing and the idle pause (never
+// to cut the agent off on its own: in speaker mode or a noisy room that is confirmed by
+// the transcript, see echo.js).
+// The noise floor is the quietest frame of the last ~2 s ("minimum statistics"), so it
+// follows a room that gets louder even while someone keeps talking. A floor learnt only
+// in silence would freeze the moment the noise starts and the VAD would never end.
 export class Vad {
   constructor({ onStart, onEnd } = {}) {
+    this.hist = new Float32Array(62).fill(0.004);
+    this.hi = 0;
     this.floor = 0.004;
     this.speaking = false;
     this.voicedRun = 0;
     this.silentRun = 0;
     this.lastVoiceAt = 0;
+    this.startAt = 0;
     this.onStart = onStart;
     this.onEnd = onEnd;
     this.level = 0;
@@ -47,9 +54,14 @@ export class Vad {
 
   push(rms, agentPlaying) {
     this.level = rms;
-    const thr = Math.max(this.floor * (agentPlaying ? 7 : 3), agentPlaying ? 0.045 : 0.012);
+    this.hist[this.hi] = Math.max(rms, 0.0005);
+    this.hi = (this.hi + 1) % this.hist.length;
+    let min = Infinity;
+    for (const v of this.hist) if (v < min) min = v;
+    this.floor = 0.85 * this.floor + 0.15 * min;
+    // ~9.5 dB above the room (12 dB while the agent's own voice is in the room)
+    const thr = Math.max(this.floor * (agentPlaying ? 4 : 3), agentPlaying ? 0.03 : 0.01);
     const voiced = rms > thr;
-    if (!voiced && !this.speaking && !agentPlaying) this.floor = 0.95 * this.floor + 0.05 * Math.max(rms, 0.001);
     if (voiced) {
       this.voicedRun++;
       this.silentRun = 0;
@@ -58,8 +70,9 @@ export class Vad {
       this.silentRun++;
       this.voicedRun = 0;
     }
-    if (!this.speaking && this.voicedRun >= (agentPlaying ? 6 : 4)) {
+    if (!this.speaking && this.voicedRun >= 4) { // ~130 ms of voice
       this.speaking = true;
+      this.startAt = performance.now();
       this.onStart?.(agentPlaying);
     } else if (this.speaking && this.silentRun >= 11) { // ~350 ms of silence
       this.speaking = false;
@@ -134,7 +147,7 @@ export class Player {
   }
 
   duck(on) {
-    this.gain.gain.setTargetAtTime(on ? 0.2 : 1, this.ctx.currentTime, 0.03);
+    this.gain.gain.setTargetAtTime(on ? 0.3 : 1, this.ctx.currentTime, 0.03);
   }
 
   stop() {

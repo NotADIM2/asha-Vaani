@@ -9,7 +9,8 @@
     "dev": "node --watch server/index.js",
     "test": "node --test test/*.test.js",
     "eval:text": "node scripts/eval-text.js",
-    "eval:audio": "node scripts/eval-audio.js"
+    "eval:audio": "node scripts/eval-audio.js",
+    "eval:echo": "node scripts/eval-echo.js"
   },
   "engines": {
     "node": ">=20"

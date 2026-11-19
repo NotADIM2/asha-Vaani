@@ -168,3 +168,35 @@ test('correction during read-back is also range-checked', () => {
   a.handle('55 kilo');
   assert.equal(a.form.weightKg, 55);
 });
+
+test('stray name from room chatter does not switch the person, and gets no reply', () => {
+  const a = mk();
+  a.handle('कविता यादव, 1066, ANC weight 64 kg, HB 6.5। अगली visit 26 November।');
+  const r = a.handle('सुनीता देवी');
+  assert.equal(a.form.beneficiaryId, '1066');
+  assert.deepEqual(r.say, []);
+  a.handle('नहीं, सुनीता देवी');
+  assert.equal(a.form.beneficiaryId, '1042');
+});
+
+test('"1 kg 700 g" is 1.7 kg', () => {
+  const a = mk();
+  a.handle('बच्चे का वजन 1 kg 700 g, नवजात, ID 1060');
+  assert.equal(a.form.weightKg, 1.7);
+});
+
+test('a mis-heard unknown ID does not replace a registered person; agent asks again', () => {
+  const a = mk();
+  a.handle('सुनीता देवी, आईडी 1042, ए एन सी विज़िट, वज़न 52 किलो, अगली विज़िट 3 दिसंबर');
+  const r = a.handle('ID 124 किलो');
+  assert.equal(a.form.beneficiaryId, '1042');
+  assert.equal(r.expect, 'beneficiary');
+  assert.match(r.say.join(' '), /आईडी/);
+});
+
+test('an unknown ID with no one set yet is still a new beneficiary', () => {
+  const a = mk('en');
+  a.handle('ID 2001 ANC weight 50 kilo');
+  assert.equal(a.form.beneficiaryId, '2001');
+  assert.equal(a.form.isNew, true);
+});

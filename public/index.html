@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0f5c58">
+  <meta name="theme-color" content="#5f7d77">
   <meta name="description" content="ASHA Vaani: speak home-visit notes, get a correct visit record, danger-sign alerts and a follow-up list. Built on Gnani Voice AI.">
   <title>ASHA Vaani</title>
   <link rel="manifest" href="/manifest.webmanifest">
@@ -11,131 +11,195 @@
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <header class="top">
-    <div class="brand">
-      <img src="/assets/icon.svg" alt="" width="32" height="32">
-      <div>
-        <h1>ASHA Vaani</h1>
-        <p class="sub">AI voice register · <span id="modeBadge" class="badge">…</span></p>
+  <div class="app">
+    <header class="top">
+      <div class="brand">
+        <span class="glass-dot logo"><img src="/assets/icon.svg" alt="" width="26" height="26"></span>
+        <div>
+          <h1>ASHA Vaani</h1>
+          <p class="sub">AI voice register · <span id="modeBadge" class="badge">…</span></p>
+        </div>
       </div>
-    </div>
-    <div class="top-right">
       <label class="sr" for="lang">Language</label>
-      <select id="lang" aria-label="Language">
+      <select id="lang" class="glass-pill" aria-label="Language">
         <option value="hi">हिन्दी</option>
         <option value="en">English</option>
         <option value="kn">ಕನ್ನಡ</option>
       </select>
-    </div>
-  </header>
+    </header>
 
-  <div class="synthetic" role="note">Demo uses <b>synthetic beneficiaries only</b>. AI assistant, not a doctor: no diagnosis or treatment advice.</div>
-
-  <main>
-    <section id="tab-visit" class="tab active" aria-label="Visit">
-      <div id="alert" class="alert" hidden role="alert">
-        <div class="alert-title">⚠ <span id="alertTitle">Refer to PHC now</span></div>
-        <div id="alertSigns" class="alert-signs"></div>
-        <div class="alert-actions">
-          <a id="call108" class="btn danger" href="tel:108">📞 108</a>
-          <a id="callPhc" class="btn danger-outline" href="tel:">📞 PHC</a>
+    <main>
+      <!-- ============ HOME ============ -->
+      <section id="tab-home" class="tab active" aria-label="Home">
+        <div class="hello">
+          <p id="greet" class="greet">Namaste, <b>ASHA didi</b> 👋</p>
+          <p class="greet-sub">here's your field snapshot for today</p>
+          <p id="todayLbl" class="today-lbl"></p>
         </div>
-      </div>
 
-      <div class="talk">
-        <button id="mic" class="mic" aria-label="Start">
-          <span class="ring"></span>
-          <svg viewBox="0 0 24 24" width="44" height="44" aria-hidden="true"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2Z"/></svg>
+        <button id="startVisit" class="cta glass">
+          <span class="cta-mic"><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2Z"/></svg></span>
+          <span class="cta-txt"><b>Start a visit</b><small>Tap and speak your notes</small></span>
+          <svg class="cta-arrow" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M13.2 5.3 19.9 12l-6.7 6.7-1.4-1.4 4.3-4.3H4v-2h12.1l-4.3-4.3z"/></svg>
         </button>
-        <div class="talk-info">
-          <div id="status" class="status">Tap the mic to start</div>
-          <div class="meter"><span id="level"></span></div>
-          <div class="metrics">
-            <span title="Time from the end of your speech to the agent's first audio">⚡ <b id="ttfa">–</b> <small>first audio</small></span>
-            <span title="Median over this session">p50 <b id="ttfaMed">–</b></span>
+
+        <div class="sec-head"><h2>Today's stats</h2><button class="link" data-goto="records">View records</button></div>
+        <div class="stats">
+          <div class="stat glass">
+            <span class="stat-lbl">Visits today</span>
+            <span class="stat-val"><b id="stVisits">0</b> <small>of 5</small></span>
+            <span id="ringVisits" class="ring-meter"><i></i></span>
+            <span class="pill-tag">daily goal</span>
+          </div>
+          <div class="stat glass">
+            <span class="stat-lbl">Refer to PHC</span>
+            <span class="stat-val"><b id="stRefer">0</b> <small>urgent</small></span>
+            <span id="ringRefer" class="ring-meter danger"><i></i></span>
+            <span id="referTag" class="pill-tag">all clear</span>
+          </div>
+          <div class="stat glass">
+            <span class="stat-lbl">Due this week</span>
+            <span class="stat-val"><b id="stDue">0</b> <small>visits</small></span>
+            <span id="ringDue" class="ring-meter warm"><i></i></span>
+            <span class="pill-tag">next 7 days</span>
+          </div>
+          <div class="stat glass">
+            <span class="stat-lbl">Vaccines due</span>
+            <span class="stat-val"><b id="stVax">0</b> <small>doses</small></span>
+            <span id="ringVax" class="ring-meter calm"><i></i></span>
+            <span class="pill-tag">UIP schedule</span>
           </div>
         </div>
-      </div>
 
-      <div class="said">
-        <div class="said-row you"><span class="who">You</span><span id="youSaid" class="txt muted">…</span></div>
-        <div class="said-row agent"><span class="who">AI</span><span id="agentSaid" class="txt muted">…</span></div>
-      </div>
-
-      <div class="card visit">
-        <div class="card-head">
-          <h2>Visit record <small id="stateLbl" class="state"></small></h2>
-          <button id="newVisit" class="btn ghost small">New visit</button>
+        <div class="sec-head"><h2>This week</h2><span class="muted small-note"><b id="weekTotal">0</b> visits</span></div>
+        <div class="glass week">
+          <div id="weekBars" class="bars" aria-label="Visits per day this week"></div>
         </div>
-        <dl id="form" class="fields"></dl>
-        <div class="row-actions">
-          <button id="readback" class="btn">🔊 Read back</button>
-          <button id="saveBtn" class="btn primary">✔ Confirm &amp; save</button>
+
+        <div class="sec-head"><h2>Next up</h2><button class="link" data-goto="follow">See all</button></div>
+        <ol id="nextUp" class="next-up"></ol>
+
+        <p class="fineprint">Synthetic beneficiaries only · AI assistant, not a doctor: no diagnosis or treatment advice.</p>
+      </section>
+
+      <!-- ============ VISIT ============ -->
+      <section id="tab-visit" class="tab" aria-label="Visit">
+        <div id="alert" class="alert" hidden role="alert">
+          <div class="alert-title">⚠ <span id="alertTitle">Refer to PHC now</span></div>
+          <div id="alertSigns" class="alert-signs"></div>
+          <div class="alert-actions">
+            <a id="call108" class="btn danger" href="tel:108">📞 108</a>
+            <a id="callPhc" class="btn danger-outline" href="tel:">📞 PHC</a>
+          </div>
         </div>
-      </div>
-    </section>
 
-    <section id="tab-follow" class="tab" aria-label="Follow-ups">
-      <div class="card">
-        <h2>Follow-up list</h2>
-        <p class="hint">Referrals first, then next visits. Say “<i>aaj ki list</i>” to hear it.</p>
-        <ol id="followList" class="list"></ol>
-      </div>
-    </section>
+        <div class="talk glass">
+          <button id="mic" class="mic" aria-label="Start">
+            <span class="ring"></span>
+            <svg viewBox="0 0 24 24" width="42" height="42" aria-hidden="true"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2Z"/></svg>
+          </button>
+          <div class="talk-info">
+            <div id="status" class="status">Tap the mic to start</div>
+            <div class="meter"><span id="level"></span></div>
+            <div class="metrics">
+              <span title="Time from the end of your speech to the agent's first audio">⚡ <b id="ttfa">–</b> <small>first audio</small></span>
+              <span title="Median over this session">p50 <b id="ttfaMed">–</b></span>
+            </div>
+          </div>
+        </div>
 
-    <section id="tab-records" class="tab" aria-label="Records">
-      <div class="card">
-        <h2>Saved visits <small class="muted">encrypted on this phone</small></h2>
-        <ul id="recordList" class="list"></ul>
-      </div>
-    </section>
+        <div class="said glass">
+          <div class="said-row you"><span class="who">You</span><span id="youSaid" class="txt muted">…</span></div>
+          <div class="said-row agent"><span class="who">AI</span><span id="agentSaid" class="txt muted">…</span></div>
+        </div>
 
-    <section id="tab-settings" class="tab" aria-label="Settings">
-      <div class="card">
-        <h2>Settings</h2>
-        <label class="field">Talk mode
-          <select id="talkMode">
-            <option value="handsfree">Hands-free (tap once, just talk)</option>
-            <option value="ptt">Hold to talk (very noisy streets)</option>
-          </select>
-        </label>
-        <label class="field">PHC phone number
-          <input id="phcNumber" inputmode="tel" placeholder="e.g. 0800000000">
-        </label>
-        <label class="field">Keep records for
-          <select id="retention">
-            <option value="1">1 day</option>
-            <option value="7">7 days</option>
-            <option value="30">30 days</option>
-          </select>
-        </label>
-        <button id="wipe" class="btn danger-outline">🗑 Delete all records now</button>
-      </div>
-      <div class="card">
-        <h2>Type a note <small class="muted">for testing without a mic</small></h2>
-        <form id="typeForm" class="type-form">
-          <input id="typeText" placeholder="Sunita Devi 1042 ANC wajan 52 kilo agli visit 3 December" autocomplete="off">
-          <button class="btn primary" type="submit">Send</button>
-        </form>
-      </div>
-      <div class="card about">
-        <h2>Privacy &amp; safety</h2>
-        <ul>
-          <li>The assistant says it is an AI in its first sentence, in your language.</li>
-          <li>Records are encrypted on this phone (AES-256-GCM) and deleted automatically.</li>
-          <li>The server keeps no audio or transcripts. Speech goes to Gnani only to be transcribed.</li>
-          <li>Danger signs come from a fixed list based on MoHFW MCP card, HBNC and IMNCI guidelines. The assistant only says “refer to PHC”, never a diagnosis, medicine or dose.</li>
-          <li>Voices are standard Gnani voices. No voice cloning.</li>
-        </ul>
-      </div>
-    </section>
-  </main>
+        <div class="card glass visit">
+          <div class="card-head">
+            <h2>Visit record <small id="stateLbl" class="state"></small></h2>
+            <button id="newVisit" class="btn ghost small">New visit</button>
+          </div>
+          <dl id="form" class="fields"></dl>
+          <div class="row-actions">
+            <button id="readback" class="btn">🔊 Read back</button>
+            <button id="saveBtn" class="btn primary">✔ Confirm &amp; save</button>
+          </div>
+        </div>
+      </section>
 
-  <nav class="tabs" role="tablist">
-    <button data-tab="visit" class="active" role="tab">🎙<span>Visit</span></button>
-    <button data-tab="follow" role="tab">📋<span>Follow-ups</span><b id="followCount" class="count" hidden></b></button>
-    <button data-tab="records" role="tab">🗂<span>Records</span></button>
-    <button data-tab="settings" role="tab">⚙<span>Settings</span></button>
+      <!-- ============ FOLLOW-UPS ============ -->
+      <section id="tab-follow" class="tab" aria-label="Follow-ups">
+        <div class="card glass">
+          <h2>Follow-up list</h2>
+          <p class="hint">Referrals first, then next visits. Say “<i>aaj ki list</i>” to hear it.</p>
+          <ol id="followList" class="list"></ol>
+        </div>
+      </section>
+
+      <!-- ============ RECORDS ============ -->
+      <section id="tab-records" class="tab" aria-label="Records">
+        <div class="sec-head"><h2>Visit slips</h2><span class="muted small-note">encrypted on this phone</span></div>
+        <ul id="recordList" class="slips"></ul>
+      </section>
+
+      <!-- ============ SETTINGS ============ -->
+      <section id="tab-settings" class="tab" aria-label="Settings">
+        <div class="card glass">
+          <h2>Settings</h2>
+          <label class="field">Talk mode
+            <select id="talkMode">
+              <option value="handsfree">Hands-free (tap once, just talk)</option>
+              <option value="ptt">Hold to talk (very noisy streets)</option>
+            </select>
+          </label>
+          <label class="field">PHC phone number
+            <input id="phcNumber" inputmode="tel" placeholder="e.g. 0800000000">
+          </label>
+          <label class="field">Keep records for
+            <select id="retention">
+              <option value="1">1 day</option>
+              <option value="7">7 days</option>
+              <option value="30">30 days</option>
+            </select>
+          </label>
+          <button id="wipe" class="btn danger-outline">🗑 Delete all records now</button>
+        </div>
+        <div class="card glass">
+          <h2>Type a note <small class="muted">for testing without a mic</small></h2>
+          <form id="typeForm" class="type-form">
+            <input id="typeText" placeholder="Sunita Devi 1042 ANC wajan 52 kilo agli visit 3 December" autocomplete="off">
+            <button class="btn primary" type="submit">Send</button>
+          </form>
+        </div>
+        <div class="card glass about">
+          <h2>Privacy &amp; safety</h2>
+          <ul>
+            <li>The assistant says it is an AI in its first sentence, in your language.</li>
+            <li>Records are encrypted on this phone (AES-256-GCM) and deleted automatically.</li>
+            <li>The server keeps no audio or transcripts. Speech goes to Gnani only to be transcribed.</li>
+            <li>Danger signs come from a fixed list based on MoHFW MCP card, HBNC and IMNCI guidelines. The assistant only says “refer to PHC”, never a diagnosis, medicine or dose.</li>
+            <li>Voices are standard Gnani voices. No voice cloning.</li>
+          </ul>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button data-tab="home" class="active" role="tab" aria-label="Home">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 3 3 10.2V21h6.5v-6h5v6H21V10.2L12 3Zm7 16h-2.5v-6h-9v6H5v-7.8l7-5.6 7 5.6V19Z"/></svg><span>Home</span>
+    </button>
+    <button data-tab="visit" role="tab" aria-label="Visit">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V22h2v-3.08A7 7 0 0 0 19 12h-2Z"/></svg><span>Visit</span>
+    </button>
+    <button data-tab="follow" role="tab" aria-label="Follow-ups">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M9 2h6a2 2 0 0 1 2 2h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2a2 2 0 0 1 2-2Zm0 2v2h6V4H9ZM5 6v14h14V6h-2v2H7V6H5Zm2 5h10v2H7v-2Zm0 4h7v2H7v-2Z"/></svg><span>Follow-ups</span><b id="followCount" class="count" hidden></b>
+    </button>
+    <button data-tab="records" role="tab" aria-label="Records">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M5 2h14v20l-2.33-1.5L14.33 22 12 20.5 9.67 22 7.33 20.5 5 22V2Zm2 2v14.3l.33-.2 2.34 1.5L12 18.1l2.33 1.5 2.34-1.5.33.2V4H7Zm2 3h6v2H9V7Zm0 4h6v2H9v-2Z"/></svg><span>Records</span>
+    </button>
+    <button data-tab="settings" role="tab" aria-label="Settings">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.5-2.5 1a7.4 7.4 0 0 0-1.7-1L15 3h-4l-.3 2.9a7.4 7.4 0 0 0-1.7 1l-2.5-1-2 3.5L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.5 2.5-1a7.4 7.4 0 0 0 1.7 1L11 21h4l.3-2.9a7.4 7.4 0 0 0 1.7-1l2.5 1 2-3.5-2.1-1.6ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/></svg><span>Settings</span>
+    </button>
   </nav>
 
   <div id="toast" class="toast" hidden></div>
