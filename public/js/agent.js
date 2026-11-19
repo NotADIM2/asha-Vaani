@@ -12,6 +12,10 @@ const ORDINAL = [
   [1, ['dusri', 'doosri', 'dusra', 'second', 'दूसरी', 'दूसरा', 'ಎರಡನೇ']],
 ].map(([i, ws]) => [i, new Set(ws.map((w) => phon(transliterate(w).toLowerCase())))]);
 
+// Weights outside these ranges are almost always a mis-hearing ("aath" for "dhai"), so the
+// agent asks before saving instead of recording them silently.
+const WEIGHT_RANGE = { newborn: [0.8, 6], child: [1.5, 30], pregnancy: [30, 150], postpartum: [30, 150] };
+
 export function newForm() {
   return {
     visitId: `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
@@ -23,6 +27,11 @@ export function newForm() {
     textDangers: [], dangers: [], dangersAbsent: [],
     transcript: [], startedAt: Date.now(),
   };
+}
+
+// true when the utterance carried no new field values (a bare "haan")
+function x0(r) {
+  return !r.fields.weightKg && !r.bareNumbers.length;
 }
 
 function resolveVaccine(base, dose, given) {
@@ -54,6 +63,7 @@ export class VisitAgent {
     this.state = 'dictate'; // dictate | ask | disambiguate | confirm
     this.expect = null;
     this.pendingMatches = null;
+    this.pendingWeight = null;
     this.lastPrompt = null;
   }
 
@@ -79,6 +89,7 @@ export class VisitAgent {
     const age = f.babyAgeDays ?? ageDays(f.beneficiary, this.now());
     if (age !== null && age <= 60) return 'newborn';
     if (f.beneficiary?.kind === 'pregnant') return 'pregnancy';
+    if (!f.beneficiary && !f.visitType && f.babyAgeDays === null) return 'unknown';
     return 'child';
   }
 
@@ -105,6 +116,12 @@ export class VisitAgent {
       if (!given.has(v.toUpperCase()) && !out.includes(v)) out.push(v);
     }
     return out;
+  }
+
+  plausibleWeight(kg) {
+    if (kg === null || kg === undefined) return true;
+    const [lo, hi] = WEIGHT_RANGE[this.group()] || [0.5, 150];
+    return kg >= lo && kg <= hi;
   }
 
   suggestion() {
@@ -210,7 +227,7 @@ export class VisitAgent {
 
     // answers to a direct question, where the value comes without its keyword
     const bare = r.bareNumbers;
-    if (this.expect === 'weightKg' && x.weightKg === undefined && bare.length) {
+    if ((this.expect === 'weightKg' || this.expect === 'weightCheck') && x.weightKg === undefined && bare.length) {
       const n = bare[bare.length - 1];
       const kg = n.unit === 'g' || n.value >= 500 ? n.value / 1000 : n.value;
       if (kg > 0 && kg < 150) { f.weightKg = kg; changed.push('weightKg'); }
@@ -358,7 +375,25 @@ export class VisitAgent {
     }
 
     const wasState = this.state;
+    const prevWeight = f.weightKg;
+    if (this.expect === 'weightCheck' && r.intent.yes && x0(r) && this.pendingWeight !== null) {
+      f.weightKg = this.pendingWeight;
+      this.pendingWeight = null;
+      this.expect = null;
+      changed.push('weightKg', 'weightChecked');
+    }
     this.applyFields(r, changed);
+    if (changed.includes('weightKg') && !changed.includes('weightChecked') && !this.plausibleWeight(f.weightKg)) {
+      this.pendingWeight = f.weightKg;
+      f.weightKg = prevWeight;
+      changed.splice(changed.indexOf('weightKg'), 1);
+      this.state = 'ask';
+      this.expect = 'weightCheck';
+      const fresh0 = this.updateDangers(r);
+      const pre = fresh0.length ? [L.alert(dangersSpoken(fresh0, this.lang))] : [];
+      return this.out([...pre, L.checkWeight(this.pendingWeight, L.who[this.group()] || L.who.child)], { alert: fresh0.length > 0, changed });
+    }
+    if (changed.includes('weightKg')) this.pendingWeight = null;
     const fresh = this.updateDangers(r);
     let alert = false;
     if (fresh.length) { say.push(L.alert(dangersSpoken(fresh, this.lang))); alert = true; }

@@ -42,6 +42,7 @@ const ttfaSamples = [];
 const ttsCache = new Map(); // text -> Int16Array[] for instant replay of fixed prompts
 const caching = new Map(); // id -> { text, chunks }
 let langVotes = { code: null, n: 0 };
+let lastFinalKey = null;
 
 // ---------------- UI helpers ----------------
 function toast(msg, ms = 3200) {
@@ -278,12 +279,27 @@ function connect() {
       switch (m.type) {
         case 'ready': prewarm(); break;
         case 'stt_speech_start': if (player?.playing) player.duck(true); break;
-        case 'stt_processing': setStatus('thinking'); break;
+        case 'stt_processing':
+        case 'stt_speech_end': setStatus('thinking'); break;
+        case 'stt_partial_transcript':
+          // live caption; a real (non-echo) partial over the agent's voice is a barge-in
+          if (m.text && !isEcho(m.text)) {
+            $('youSaid').textContent = m.text;
+            $('youSaid').classList.add('muted');
+            if (player?.playing && tokenize(m.text).length >= 2) stopSpeaking();
+          }
+          break;
         case 'stt_transcript':
+        case 'stt_final_transcript': {
+          // with partials on the server sends final_transcript; without, transcript
+          const key = m.segment_id || m.utterance_id || m.text;
+          if (key && key === lastFinalKey) break;
+          lastFinalKey = key;
           player?.duck(false);
           onTranscript(m.text, { detectedLang: m.detected_language_code });
           if (!player?.playing) setStatus('listening');
           break;
+        }
         case 'stt_error': toast(`Speech service: ${m.message}`); break;
         case 'tts_end': {
           const c = caching.get(m.id);

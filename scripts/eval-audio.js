@@ -18,7 +18,9 @@ const registry = buildRegistry(NOW);
 // a different voice from the app's, so the eval doesn't only hear the voice the app speaks with
 const VOICES = { hi: 'Shivani', en: 'Sohini', kn: 'Shruthi' };
 const TTS_LANG = { hi: 'hi-IN', en: 'en-IN', kn: 'kn-IN' };
-const STT_LANG = { hi: 'hi-IN,en-IN', en: 'en-IN,hi-IN', kn: 'kn-IN,en-IN' };
+// The live API takes exactly one locale per stream; Prisma v3.0 still transcribes English
+// words inside Hindi or Kannada speech (code-mix) with a single locale.
+const STT_LANG = { hi: 'hi-IN', en: 'en-IN', kn: 'kn-IN' };
 
 function tts(text, lang) {
   return new Promise((resolve, reject) => {
@@ -83,7 +85,7 @@ function stt(pcm, lang) {
         quiet = setTimeout(finish, 2500);
       },
       onMessage: (m) => {
-        if (m.type === 'transcript' && m.text) {
+        if ((m.type === 'transcript' || m.type === 'final_transcript') && m.text) {
           texts.push(m.text);
           if (m.latency) latencies.push(m.latency);
           if (quiet) { clearTimeout(quiet); quiet = setTimeout(finish, 1200); }

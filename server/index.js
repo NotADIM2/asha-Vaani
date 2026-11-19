@@ -27,7 +27,9 @@ const VOICES = {
   en: process.env.TTS_VOICE_EN || 'Sunaina',
   kn: process.env.TTS_VOICE_KN || 'Sunaina',
 };
-const STT_LANG = { hi: 'hi-IN,en-IN', en: 'en-IN,hi-IN', kn: 'kn-IN,en-IN' };
+// The live API takes exactly one locale per stream; Prisma v3.0 still transcribes English
+// words inside Hindi or Kannada speech (code-mix) with a single locale.
+const STT_LANG = { hi: 'hi-IN', en: 'en-IN', kn: 'kn-IN' };
 const TTS_LANG = { hi: 'hi-IN', en: 'en-IN', kn: 'kn-IN' };
 
 const app = express();
@@ -40,7 +42,7 @@ app.use((_req, res, next) => {
   next();
 });
 app.use(express.json({ limit: '16kb' }));
-app.use(express.static(path.join(__dirname, '..', 'public'), { extensions: ['html'], maxAge: '1h' }));
+app.use(express.static(path.join(__dirname, '..', 'public'), { extensions: ['html'], maxAge: 0 }));
 
 app.get('/api/config', (_req, res) => {
   res.json({ gnani: Boolean(KEY), llm: Boolean(KEY) && LLM_ENABLED, sttModel: STT_MODEL, ttsModel: TTS_MODEL, ttsSampleRate: TTS_SAMPLE_RATE });

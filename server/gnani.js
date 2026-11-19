@@ -20,6 +20,9 @@ export function openStt({ apiKey, languageCode, keyterms = [], model, format, on
     language_code: languageCode,
     format,
     'x-sample-rate': '16000',
+    // Live partial transcripts every ~450 ms (not in the public docs; the `connected` frame
+    // echoes partials_enabled). Messages then arrive as partial_transcript / final_transcript.
+    'x-partials': 'true',
     // Household and street noise: a stricter speech gate, and a short stray-sound floor.
     'x-vad-threshold': '0.6',
     'x-min-speech-ms': '200',

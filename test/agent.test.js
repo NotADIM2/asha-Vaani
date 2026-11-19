@@ -139,3 +139,32 @@ test('follow-up list query', () => {
   const r = a.handle('aaj ki list batao');
   assert.match(r.say[0], /Rekha Devi, refer to P H C, today/);
 });
+
+test('implausible newborn weight is questioned, not saved silently', () => {
+  const a = mk();
+  const r = a.handle('Fatima Begum 1060 navjat, wajan 8 kilo');
+  assert.equal(a.form.weightKg, null);
+  assert.equal(r.expect, 'weightCheck');
+  assert.match(r.say.join(' '), /असामान्य/);
+  a.handle('nahi, 2.8 kilo');
+  assert.equal(a.form.weightKg, 2.8);
+});
+
+test('implausible weight can be confirmed with "haan"', () => {
+  const a = mk('en');
+  a.handle('Rekha Devi 1083 ANC weight 10 kilo');
+  assert.equal(a.form.weightKg, null);
+  a.handle('haan');
+  assert.equal(a.form.weightKg, 10);
+});
+
+test('correction during read-back is also range-checked', () => {
+  const a = mk();
+  a.handle('ID 1042 ANC wajan 52 kilo agli visit 3 December');
+  assert.equal(a.state, 'confirm');
+  a.handle('nahi weight 5 kilo');
+  assert.equal(a.form.weightKg, 52);
+  assert.equal(a.expect, 'weightCheck');
+  a.handle('55 kilo');
+  assert.equal(a.form.weightKg, 55);
+});
