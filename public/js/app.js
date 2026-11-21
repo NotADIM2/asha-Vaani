@@ -118,8 +118,10 @@ function setStatus(kind) {
   const m = $('mic');
   m.classList.toggle('listening', kind === 'listening');
   m.classList.toggle('speaking', kind === 'speaking');
-  m.classList.toggle('off', kind === 'off');
-  $('status').textContent = kind === 'listening' ? u.listening : kind === 'speaking' ? u.speaking : kind === 'thinking' ? '…' : talkMode === 'ptt' ? u.hold : u.tapToTalk;
+  m.classList.toggle('off', kind === 'off' || kind === 'error');
+  $('status').classList.toggle('bad', kind === 'error');
+  $('status').textContent = kind === 'listening' ? u.listening : kind === 'speaking' ? u.speaking : kind === 'thinking' ? '…'
+    : kind === 'connecting' ? S().connecting : kind === 'error' ? S().startFailed : talkMode === 'ptt' ? u.hold : u.tapToTalk;
 }
 
 // Connection state is shown as it is: the browser's own online flag. Nothing is synced either way.
@@ -221,6 +223,8 @@ function renderForm(changed = []) {
 let draftTimer = null;
 function persistDraft() {
   clearTimeout(draftTimer);
+  // a visit in progress is the current one; an older draft is not offered over it
+  if (agent.dirty) $('draftCard').hidden = true;
   draftTimer = setTimeout(() => {
     const job = agent.dirty ? saveDraft(agent.snapshot()) : clearDraft();
     job.catch(() => { /* the visit is still on screen; storage may be blocked */ });
@@ -300,16 +304,27 @@ function renderFollowups() {
   $('followCount').textContent = attention.length;
 }
 
-// Vaccination-day list: who to call before the village health day, grouped by vaccine.
+// Vaccination-day list: who to call before the village health day. One row per person with
+// all their due vaccines (in schedule order), by ward, so each family is one call.
 function renderVaccines() {
   const s = S();
   const e = escapeHtml;
-  const groups = vaccinationList(registry, records, new Date());
-  $('vaccineGroups').innerHTML = groups.length
-    ? groups.map((g) => `<h3 class="group">${e(g.code)} (${g.people.length})</h3><ul class="items">${g.people.map((p) => `<li class="item">
-        <span class="who"><b>${e(p.name || '—')}${p.id ? ` · ID ${e(p.id)}` : ''}</b><span>${p.ward != null ? e(`ward ${p.ward}`) : ''}</span></span>
+  if (listError) { $('vaccineGroups').innerHTML = `<p class="error">${e(s.readFailed(listError))}</p>`; return; }
+  const people = new Map();
+  for (const g of vaccinationList(registry, records, new Date())) {
+    for (const p of g.people) {
+      const k = p.id || p.name;
+      if (!people.has(k)) people.set(k, { ...p, codes: [] });
+      people.get(k).codes.push(g.code);
+    }
+  }
+  const rows = [...people.values()].sort((a, b) => (a.ward ?? 99) - (b.ward ?? 99) || (a.name || '').localeCompare(b.name || ''));
+  $('vaccineGroups').innerHTML = rows.length
+    ? `<ul class="items">${rows.map((p) => `<li class="item">
+        <span class="who"><b>${e(p.name || '—')}${p.id ? ` · ID ${e(p.id)}` : ''}</b><span>${p.ward != null ? e(`ward ${p.ward}`) : ''}</span>
+          <span class="chips">${p.codes.map((c) => `<span class="chip due">${e(c)}</span>`).join('')}</span></span>
         ${p.id && registry.some((b) => b.id === p.id) ? `<button class="btn small" data-person="${e(p.id)}">${e(s.startThis)}</button>` : ''}
-      </li>`).join('')}</ul>`).join('')
+      </li>`).join('')}</ul>`
     : `<p class="empty">${e(s.vacEmpty)}</p>`;
 }
 
@@ -321,7 +336,7 @@ function recordHtml(r) {
   const store = [r.recordSeconds ? `${s.recordedIn(s.dur(r.recordSeconds))}.` : '', r.dataBytes ? s.dataOf(fmtBytes(r.dataBytes)) : '', s.stored, r.updatedAt ? s.edited(fmtTime(r.updatedAt)) : '', r.expiresAt ? s.deletesOn(fmtDate(iso(new Date(r.expiresAt)))) : ''].filter(Boolean).join(' ');
   return `<details>
     <summary><span><b>${e(r.name || '—')}${r.beneficiaryId ? ` · ID ${e(r.beneficiaryId)}` : ''}</b>
-      <span>${e(VISIT_LABEL[r.visitType] || '')} · ${e(fmtDate(r.visitDate))}${r.referToPHC ? ` · <span class="referred">${e(s.referred)}</span>` : ''}</span></span><span aria-hidden="true">›</span></summary>
+      <span>${e(VISIT_LABEL[r.visitType] || '')} · ${e(fmtDate(r.visitDate))}${r.referToPHC ? ` · <span class="referred">${e(s.referred)}</span>` : ''}</span></span></summary>
     <div class="rec-body">
       <dl class="fields">${dl(rows)}</dl>
       ${heard ? `<p class="muted"><b>${e(s.heard)}</b></p>${heard}` : ''}
@@ -368,6 +383,7 @@ function renderRecords() {
 
 function fmtBytes(n) {
   if (n == null) return '–';
+  if (n === 0) return '0 KB';
   return n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`;
 }
 
@@ -729,6 +745,10 @@ async function onTranscript(text, meta = {}) {
       showSaved(true, null, res.saved.recordSeconds);
       lastRendered = {};
       renderForm();
+      // the saved visit is no longer a draft: clear it before the lists (and the home
+      // screen's "Unfinished visit" card) are redrawn, not after the debounce
+      clearTimeout(draftTimer);
+      try { await clearDraft(); } catch { /* storage blocked */ }
       refreshLists();
     } catch (e) {
       // nothing was written: put the visit back on screen and say so, never "saved"
@@ -915,6 +935,7 @@ async function start() {
   if (running) return;
   if (!navigator.onLine) { toast(S().offlineHint); showTab('visit'); $('typeText').focus(); return; }
   running = true;
+  setStatus('connecting');
   lastActivity = performance.now();
   ctx = new (window.AudioContext || window.webkitAudioContext)();
   await ctx.resume();
@@ -951,7 +972,7 @@ async function start() {
     }
   } catch (e) {
     running = false;
-    setStatus('off');
+    setStatus('error');
     toast(`Microphone error: ${e.message}`);
     return;
   }

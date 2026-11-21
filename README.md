@@ -32,8 +32,9 @@ Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam, English), mixed with Engli
     vaccines, referral), and the read-back says the last weight too: *"weight 52 kilo, last visit 5 November it was
     50 kilo"*. A mis-heard number or a real drop stands out at once. Vaccines given at earlier saved visits count, so
     Td-1 given last month is not asked for again, and Td-2 is due four weeks later.
-12. **Vaccination-day list.** "tike ki list" (or the Follow-ups tab) gives everyone due a vaccine now, grouped by
-    vaccine: register people by the national schedule, minus what was given at saved visits. She uses it to call
+12. **Vaccination-day list.** "tike ki list" speaks everyone due a vaccine now, grouped by vaccine; the Follow-ups tab
+    shows one row per family with all their due vaccines, by ward. Register people are worked out from the national
+    schedule, minus what was given at saved visits. She uses it to call
     families before the village health and nutrition day.
 
 No typing needed (a type box is there for when there is no internet). The app runs in the phone's browser and can be

@@ -48,7 +48,7 @@
         </div>
       </div>
 
-      <div id="dueCard" class="card" hidden>
+      <div id="dueCard" class="section" hidden>
         <div class="card-head"><h3 data-t="dueTitle">Needs attention</h3><button class="link" data-goto="follow" data-t="allFollowups">All follow-ups</button></div>
         <ul id="dueList" class="items"></ul>
       </div>
@@ -98,7 +98,7 @@
         </div>
       </form>
 
-      <div class="card">
+      <div class="card record">
         <div class="card-head">
           <h2><span data-t="record">Visit record</span> <small id="stateLbl" class="state"></small></h2>
           <button id="newVisit" class="btn small" data-t="newVisit">New visit</button>
@@ -119,15 +119,15 @@
     <section id="tab-follow" class="tab" aria-labelledby="fuTitle">
       <h2 id="fuTitle" data-t="fuTitle">Follow-ups</h2>
       <p class="muted" data-t="fuHint"></p>
-      <div id="followGroups"></div>
+      <div id="followGroups"><p class="empty" data-t="loading">Loading…</p></div>
       <h2 class="section-gap" data-t="vacTitle">Vaccination day list</h2>
       <p class="muted" data-t="vacHint"></p>
-      <div id="vaccineGroups"></div>
+      <div id="vaccineGroups"><p class="empty" data-t="loading">Loading…</p></div>
     </section>
 
     <!-- ============ RECORDS ============ -->
     <section id="tab-records" class="tab" aria-labelledby="recTitle">
-      <div id="summary" class="card summary" hidden></div>
+      <div id="summary" class="summary" hidden></div>
       <div id="registerCard" class="card register" hidden>
         <h3 data-t="regTitle">Register page</h3>
         <p class="muted" data-t="regHint"></p>
@@ -146,7 +146,7 @@
     <!-- ============ SETTINGS ============ -->
     <section id="tab-settings" class="tab" aria-labelledby="setTitle">
       <h2 id="setTitle" data-t="setTitle">Settings</h2>
-      <div class="card">
+      <div class="section">
         <label class="field"><span data-t="talkMode">Talk mode</span>
           <select id="talkMode">
             <option value="handsfree" data-t="handsfree">Hands-free</option>
@@ -175,12 +175,12 @@
         </label>
         <button id="wipe" class="btn danger-outline" data-t="wipe">Delete all records now</button>
       </div>
-      <div class="card summary">
+      <div class="section summary">
         <h3 data-t="dataTitle">Data use</h3>
         <div id="dataUse" class="sum-grid"></div>
         <p class="fine" data-t="dataNote"></p>
       </div>
-      <div class="card">
+      <div class="section">
         <h3 data-t="aboutTitle">About this prototype</h3>
         <ul id="aboutList" class="about"></ul>
       </div>
