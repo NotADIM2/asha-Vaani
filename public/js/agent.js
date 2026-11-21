@@ -25,7 +25,7 @@ export function newForm() {
     vaccinesGiven: [], vaccinesDueStated: [], vaccinesDueNone: false, vaccinesDueConfirmed: false,
     nextVisit: null, ifaGiven: null,
     textDangers: [], dangers: [], dangersAbsent: [],
-    transcript: [], startedAt: Date.now(),
+    transcript: [], startedAt: Date.now(), heardAt: null,
   };
 }
 
@@ -50,21 +50,24 @@ function resolveVaccine(base, dose, given) {
 }
 
 export class VisitAgent {
-  constructor({ lang = 'hi', registry = [], now = () => new Date(), followups = () => [] } = {}) {
+  // `clock` (ms) times how long recording a visit takes; `now` is the calendar date.
+  constructor({ lang = 'hi', registry = [], now = () => new Date(), followups = () => [], clock = () => Date.now() } = {}) {
     this.lang = lang;
     this.registry = registry;
     this.now = now;
+    this.clock = clock;
     this.getFollowups = followups;
     this.reset();
   }
 
   reset() {
-    this.editing = null; // { visitDate, savedAt } of a saved record being corrected
+    this.editing = null; // { visitDate, savedAt, recordSeconds } of a saved record being corrected
     this.form = newForm();
-    this.state = 'dictate'; // dictate | ask | disambiguate | confirm
+    this.state = 'dictate'; // dictate | ask | disambiguate | confirm | referralCheck
     this.expect = null;
     this.pendingMatches = null;
     this.pendingWeight = null;
+    this.pendingReferral = null;
     this.lastPrompt = null;
   }
 
@@ -105,7 +108,7 @@ export class VisitAgent {
       f.vaccinesDueStated = [...(rec.vaccinesDue || [])];
       if (!f.vaccinesDueStated.length) f.vaccinesDueNone = true;
     }
-    this.editing = { visitDate: rec.visitDate, savedAt: rec.savedAt };
+    this.editing = { visitDate: rec.visitDate, savedAt: rec.savedAt, recordSeconds: rec.recordSeconds ?? null };
     this.state = 'confirm';
     return f;
   }
@@ -397,6 +400,9 @@ export class VisitAgent {
       dangerSignsDenied: f.dangersAbsent,
       referToPHC: f.dangers.length > 0,
       transcript: f.transcript,
+      // from her first word to the save; a correction keeps the original time
+      recordSeconds: this.editing ? this.editing.recordSeconds : f.heardAt ? Math.max(1, Math.round((this.clock() - f.heardAt) / 1000)) : null,
+      turns: f.transcript.length,
       lang: this.lang,
       visitDate: this.editing?.visitDate || iso(this.now()),
       savedAt: this.editing?.savedAt || new Date().toISOString(),
@@ -425,6 +431,7 @@ export class VisitAgent {
     const now = this.now();
     const r = extract(text, { now, registry: this.registry, expect: this.expect, lang: this.lang });
     const f = this.form;
+    const wasDirty = this.dirty;
     f.transcript.push(text);
     const say = [];
     const changed = [];
@@ -433,10 +440,38 @@ export class VisitAgent {
       this.reset();
       return this.out([L.cancelled], { reset: true });
     }
-    if (r.intent.followups) {
-      const items = this.getFollowups().slice(0, 3).map((x) => L.followItem({ ...x, when: x.when === iso(now) ? L.today : dateSpoken(x.when, this.lang) }));
-      return this.out([L.followups(items)]);
+    // "Did she reach the PHC?" A plain yes or no closes the question; anything else is
+    // treated as the start of a visit note.
+    if (this.state === 'referralCheck') {
+      const ref = this.pendingReferral;
+      this.pendingReferral = null;
+      this.state = 'dictate';
+      this.expect = null;
+      const answer = r.intent.no ? 'not_reached' : r.intent.yes ? 'reached' : null;
+      if (ref && answer && x0(r) && !r.dangers.present.length) {
+        f.transcript.pop();
+        const say1 = answer === 'reached' ? L.reachedNoted(ref.name) : L.notReachedNoted(ref.name);
+        return this.out([say1], { referralOutcome: { visitId: ref.visitId, outcome: answer, checkedOn: iso(now) } });
+      }
     }
+    if (r.intent.followups) {
+      // asking for the list is not part of a visit note
+      if (!wasDirty) f.transcript.pop();
+      const fu = this.getFollowups();
+      const items = fu.slice(0, 3).map((x) => L.followItem({ ...x, when: x.when === iso(now) ? L.today : dateSpoken(x.when, this.lang) }));
+      const say0 = [L.followups(items)];
+      // Referral follow-through: ask about the first referral still waiting for an answer,
+      // but never in the middle of a visit.
+      const check = !wasDirty && fu.find((x) => x.checkDue);
+      if (check) {
+        this.pendingReferral = check;
+        this.state = 'referralCheck';
+        this.expect = 'yesno';
+        say0.push(L.askReached(check.name || L.none, dateSpoken(check.referredOn, this.lang)));
+      }
+      return this.out(say0);
+    }
+    if (!f.heardAt) f.heardAt = this.clock();
     if (r.intent.newVisit && Object.keys(r.fields).length === 0) {
       this.reset();
       return this.out([L.newVisit], { reset: true });
@@ -465,6 +500,7 @@ export class VisitAgent {
     // nothing but a stray name from the room: stay quiet rather than answer the chatter
     if (this.heardChatter && !changed.length && !r.dangers.present.length && !Object.keys(r.intent).length) {
       f.transcript.pop();
+      if (!f.transcript.length) f.heardAt = null;
       return this.out([], { changed });
     }
     if (changed.includes('weightKg') && !changed.includes('weightChecked') && !this.plausibleWeight(f.weightKg)) {

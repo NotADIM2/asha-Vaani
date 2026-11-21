@@ -87,6 +87,8 @@ main { max-width: 640px; margin: 0 auto; padding: 16px; }
 .item .who .when { margin-top: 2px; font-size: 14px; font-weight: 600; color: var(--muted); }
 .item .who .when.overdue { color: var(--warn-ink); }
 .item .who .when.refer { color: var(--danger); }
+.item .reach { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 8px; }
+.item .reach .q { flex-basis: 100%; margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
 .group { margin: 18px 0 8px; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
 li.empty, p.empty { padding: 16px; border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); text-align: center; background: var(--surface); }
 .error { padding: 12px; border-radius: 10px; background: var(--danger-soft); color: var(--danger); }
@@ -132,6 +134,7 @@ li.empty, p.empty { padding: 16px; border: 1px dashed var(--line); border-radius
 
 /* records */
 .summary h3 { margin-bottom: 8px; }
+.summary .sum-sub { margin-top: 18px; }
 .sum-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
 .sum-grid div { padding: 8px 10px; border-radius: 8px; background: var(--bg); }
 .sum-grid b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }

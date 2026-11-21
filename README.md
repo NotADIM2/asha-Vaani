@@ -14,6 +14,14 @@ Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam, English), mixed with Engli
    108 / PHC call buttons.
 4. **A follow-up list**: referrals first, then overdue, today, the next 7 days and later. She can ask "aaj ki list".
 5. **Saved visits she can reopen and correct**, and an unfinished visit that survives a reload.
+6. **Referral follow-through.** From the day after a referral, "aaj ki list" asks *"did she reach the PHC?"*. She answers
+   yes or no by voice (or taps a button). "Not yet" keeps the woman at the top of the list and asks again the next day.
+   Field studies find referred high-risk women are often never reminded or accompanied
+   ([BMC Pregnancy & Childbirth 2022](https://link.springer.com/doi/10.1186/s12884-022-04601-6)), so the app keeps asking until she has gone.
+7. **Measured time per visit.** Every saved visit shows how long recording took, from her first word to the save, with
+   the average and total on the Records tab. "Faster than paper" becomes a number, not a claim.
+8. **This month's activity counts** for her monthly incentive claim: visits by type, vaccine doses given, referrals
+   advised and referrals that reached the PHC. Counts only, no rupee amounts (they differ by state).
 
 No typing needed (a type box is there for when there is no internet). The app runs in the phone's browser and can be
 installed as a PWA on a low-end Android phone.
@@ -61,7 +69,8 @@ Open http://localhost:3000 in Chrome, tap the big mic, allow microphone access, 
 | "haan" | Saved and encrypted. The follow-up list updates |
 | "Rekha Devi 1083, khoon aa raha hai" | Spoken danger alert straight away, red banner, 108 / PHC buttons |
 | "bukhar ke liye kya dawai dein?" | Fixed refusal: no medicine advice, ask the ANM / PHC doctor |
-| "aaj ki list" | Speaks the follow-ups, referrals first |
+| "aaj ki list" | Speaks the follow-ups, referrals first. For a referral from an earlier day it asks "did she reach the PHC?" |
+| "nahi" | Noted as not yet reached: she stays at the top of the referral list and is asked about again tomorrow |
 
 Synthetic register (all invented): `1042` Sunita Devi (ANC), `1043` Sunita Kumari (newborn), `1051` Priya Sharma (ANC),
 `1057` Lakshmi Bai (child, 6 weeks), `1060` Fatima Begum (newborn, 2 days), `1066` Kavita Yadav (ANC, 36 wk),
@@ -181,7 +190,9 @@ Same flow in plain text:
 | Unfinished | The visit in progress is kept as an encrypted draft and offered again after a reload | `store.saveDraft`, `agent.restore` |
 | View / correct | Records tab → open a visit → *Correct this visit*. Saving replaces the same record (same ID and visit date) | `agent.edit` |
 | Follow-up | From each person's latest visit; grouped Referral advised / Overdue / Today / Next 7 days / Later, with one shared `dueStatus`. A referral keeps the date it was advised | `store.followupsFrom` |
-| Summary | Counts on this phone only: visits by type, referrals advised, overdue, due in 7 days. No names, no ranking, no location | `store.summarize` |
+| Referral outcome | "Did she reach the PHC?" from the day after the referral, by voice (yes/no in all ten languages) or button. "Reached" closes the referral; "not yet" keeps it on top and asks again the next day. Stored on the same record without moving its delete date | `agent.handle` (`referralCheck`), `store.updateRecord` |
+| Recording time | Seconds from her first word to the save, stored with the visit (a correction keeps the original time) | `agent.record` |
+| Summary | Counts on this phone only: visits by type, referrals advised, overdue, due in 7 days; this month's visits, doses given, referrals and referrals reached; average and total recording time. No names, no ranking, no location | `store.summarize` |
 
 **Sync:** there is none. Records live only in this browser on this phone, encrypted, and are deleted after the retention
 period set in Settings (1 / 7 / 30 days). Every record says "Stored on this phone only… Not synced" and its delete date.

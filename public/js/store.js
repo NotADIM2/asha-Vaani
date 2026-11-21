@@ -71,6 +71,18 @@ export async function saveRecord(rec) {
   await done;
 }
 
+// Change a few fields of a saved visit (the referral outcome) without moving its delete date.
+export async function updateRecord(visitId, patch) {
+  const k = await key();
+  const row = await req((await store('records')).get(visitId));
+  if (!row) throw new Error('visit not found');
+  const sealed = await seal({ ...(await open(row, k)), ...patch });
+  const s = await store('records', 'readwrite');
+  const done = new Promise((resolve, reject) => { s.transaction.oncomplete = resolve; s.transaction.onerror = () => reject(s.transaction.error); s.transaction.onabort = () => reject(s.transaction.error || new Error('write aborted')); });
+  s.put({ id: visitId, ...sealed, expiresAt: row.expiresAt });
+  await done;
+}
+
 // Each record comes back with `expiresAt` so the screen can say when it will be deleted.
 export async function listRecords() {
   await purgeExpired();
@@ -134,6 +146,14 @@ export function dueStatus(dueIso, todayIso) {
 
 const STATUS_ORDER = { overdue: 0, today: 1, soon: 2, later: 3, none: 4 };
 
+// Did a referred woman actually reach the PHC? Asked from the day after the referral, and
+// again each day while the answer is "not yet". Once she reached, the referral is closed.
+function referralCheckDue(r, todayIso) {
+  if (!r.referToPHC || r.referralOutcome === 'reached') return false;
+  if (r.referralOutcome === 'not_reached') return (r.referralCheckedOn || '') < todayIso;
+  return (r.visitDate || '') < todayIso;
+}
+
 // Follow-up list from each person's latest visit. A referral stays dated to the visit where
 // it was advised (it is not re-dated to "today" every day); the next-visit date is the due date.
 export function followupsFrom(records, todayIso) {
@@ -148,8 +168,11 @@ export function followupsFrom(records, todayIso) {
       visitId: r.visitId,
       name: r.name,
       beneficiaryId: r.beneficiaryId,
-      refer: Boolean(r.referToPHC),
+      refer: Boolean(r.referToPHC) && r.referralOutcome !== 'reached',
       referredOn: r.referToPHC ? r.visitDate : null,
+      referralOutcome: r.referToPHC ? r.referralOutcome || null : null,
+      referralCheckedOn: r.referralCheckedOn || null,
+      checkDue: referralCheckDue(r, todayIso),
       dangerSigns: r.dangerSigns || [],
       due: r.nextVisit || null,
       when: r.nextVisit || r.visitDate,
@@ -161,17 +184,37 @@ export function followupsFrom(records, todayIso) {
     .sort((a, b) => (b.refer - a.refer) || (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (a.when || '').localeCompare(b.when || ''));
 }
 
-// Counts only, for a review screen: no names, no per-worker scores, no location.
-export function summarize(records, todayIso) {
-  const fu = followupsFrom(records, todayIso);
+function countByType(records) {
   const byType = { ANC: 0, PNC: 0, HBNC: 0, IMM: 0 };
   for (const r of records) if (r.visitType in byType) byType[r.visitType]++;
+  return byType;
+}
+
+// Counts only, for a review screen: no names, no per-worker scores, no location.
+// `month` is the calendar month of todayIso: the activities an ASHA lists on her monthly
+// incentive claim (visits by type, doses given, referrals). Amounts differ by state, so none
+// are shown. `timing` is how long recording took, from her first word to the save.
+export function summarize(records, todayIso) {
+  const fu = followupsFrom(records, todayIso);
+  const month = records.filter((r) => (r.visitDate || '').slice(0, 7) === todayIso.slice(0, 7));
+  const timed = records.map((r) => r.recordSeconds).filter((s) => typeof s === 'number' && s > 0);
+  const total = timed.reduce((a, b) => a + b, 0);
   return {
     visits: records.length,
-    byType,
+    byType: countByType(records),
     referrals: records.filter((r) => r.referToPHC).length,
+    reachedPHC: records.filter((r) => r.referToPHC && r.referralOutcome === 'reached').length,
     overdue: fu.filter((x) => x.status === 'overdue').length,
     dueSoon: fu.filter((x) => x.status === 'today' || x.status === 'soon').length,
     newPeople: records.filter((r) => r.isNew).length,
+    month: {
+      key: todayIso.slice(0, 7),
+      visits: month.length,
+      byType: countByType(month),
+      dosesGiven: month.reduce((n, r) => n + (r.vaccinesGiven || []).length, 0),
+      referrals: month.filter((r) => r.referToPHC).length,
+      reachedPHC: month.filter((r) => r.referToPHC && r.referralOutcome === 'reached').length,
+    },
+    timing: { visits: timed.length, avgSeconds: timed.length ? Math.round(total / timed.length) : null, totalSeconds: total },
   };
 }

@@ -3,7 +3,7 @@
 import { VisitAgent } from './agent.js';
 import { buildRegistry, registryKeyterms } from './nlu/registry.js';
 import { Mic, Vad, Player, listMics, judgeLevel } from './audio.js';
-import { saveRecord, listRecords, deleteAll, followupsFrom, summarize, saveDraft, loadDraft, clearDraft } from './store.js';
+import { saveRecord, updateRecord, listRecords, deleteAll, followupsFrom, summarize, saveDraft, loadDraft, clearDraft } from './store.js';
 import { dangerLabel } from './nlu/danger.js';
 import { iso } from './nlu/dates.js';
 import { tokenize } from './nlu/translit.js';
@@ -243,12 +243,18 @@ function followItem(x, { compact = false } = {}) {
     VISIT_LABEL[x.visitType] || '',
     x.refer ? s.referredOn(fmtDate(x.referredOn)) : '',
     x.refer && x.dangerSigns.length ? x.dangerSigns.map((d) => dangerLabel(d, lang)).join(', ') : '',
+    x.referralOutcome === 'reached' ? s.reachedOn(fmtDate(x.referralCheckedOn)) : '',
+    x.refer && x.referralOutcome === 'not_reached' ? s.notReachedOn(fmtDate(x.referralCheckedOn)) : '',
     !compact && x.vaccinesDue.length ? `${s.due}: ${x.vaccinesDue.join(', ')}` : '',
   ].filter(Boolean).join(' · ');
   const when = x.due ? `${relDay(x.due)}${x.status === 'soon' || x.status === 'later' ? '' : ` · ${fmtDate(x.due)}`}` : '';
+  // an open referral asks whether she reached the PHC, until the answer is yes
+  const reach = x.refer ? `<div class="reach"><p class="q">${e(s.checkQ)}</p>
+      <button class="btn small" data-reach="${e(x.visitId)}" data-outcome="reached">${e(s.reachedBtn)}</button>
+      <button class="btn small" data-reach="${e(x.visitId)}" data-outcome="not_reached">${e(s.notYetBtn)}</button></div>` : '';
   return `<li class="item${x.refer ? ' refer' : ''}">
     <span class="who"><b>${e(x.name || '—')}${x.beneficiaryId ? ` · ID ${e(x.beneficiaryId)}` : ''}</b><span>${e(sub)}</span>
-      <span class="when ${x.refer ? 'refer' : x.status}">${e(x.due ? s.nextOn(when) : '')}</span></span>
+      <span class="when ${x.refer ? 'refer' : x.status}">${e(x.due ? s.nextOn(when) : '')}</span>${reach}</span>
     <button class="btn small" data-follow="${e(x.visitId)}">${e(s.startThis)}</button>
   </li>`;
 }
@@ -280,7 +286,7 @@ function recordHtml(r) {
   const e = escapeHtml;
   const rows = fieldRows({ ...r, dangers: r.dangerSigns, dangersAbsent: r.dangerSignsDenied });
   const heard = (r.transcript || []).slice(-3).map((t) => `<p class="heard">“${e(typeof t === 'string' ? t : t?.text || '')}”</p>`).join('');
-  const store = [s.stored, r.updatedAt ? s.edited(fmtTime(r.updatedAt)) : '', r.expiresAt ? s.deletesOn(fmtDate(iso(new Date(r.expiresAt)))) : ''].filter(Boolean).join(' ');
+  const store = [r.recordSeconds ? `${s.recordedIn(s.dur(r.recordSeconds))}.` : '', s.stored, r.updatedAt ? s.edited(fmtTime(r.updatedAt)) : '', r.expiresAt ? s.deletesOn(fmtDate(iso(new Date(r.expiresAt)))) : ''].filter(Boolean).join(' ');
   return `<details>
     <summary><span><b>${e(r.name || '—')}${r.beneficiaryId ? ` · ID ${e(r.beneficiaryId)}` : ''}</b>
       <span>${e(VISIT_LABEL[r.visitType] || '')} · ${e(fmtDate(r.visitDate))}${r.referToPHC ? ` · <span class="referred">${e(s.referred)}</span>` : ''}</span></span><span aria-hidden="true">›</span></summary>
@@ -306,12 +312,23 @@ function renderRecords() {
   $('summary').hidden = !records.length;
   if (records.length) {
     const m = summarize(records, iso(new Date()));
-    const cell = (n, label) => `<div><b>${n}</b><span>${e(label)}</span></div>`;
+    const cell = (n, label) => `<div><b>${e(n)}</b><span>${e(label)}</span></div>`;
+    const mo = m.month;
+    const [y, mm] = mo.key.split('-').map(Number);
+    const monthName = new Date(y, mm - 1, 1).toLocaleDateString(locale(), { month: 'long', year: 'numeric' });
     $('summary').innerHTML = `<h3>${e(s.sumTitle)}</h3><div class="sum-grid">
       ${cell(m.visits, s.sumVisits)}
       ${Object.entries(m.byType).filter(([, n]) => n).map(([k, n]) => cell(n, VISIT_LABEL[k])).join('')}
       ${cell(m.referrals, s.sumRefer)}${cell(m.overdue, s.sumOverdue)}${cell(m.dueSoon, s.sumSoon)}${m.newPeople ? cell(m.newPeople, s.sumNew) : ''}
-    </div><p class="fine">${e(s.sumNote)}</p>`;
+    </div><p class="fine">${e(s.sumNote)}</p>
+    <h3 class="sum-sub">${e(s.monthTitle(monthName))}</h3><div class="sum-grid">
+      ${cell(mo.visits, s.sumVisits)}
+      ${Object.entries(mo.byType).filter(([, n]) => n).map(([k, n]) => cell(n, VISIT_LABEL[k])).join('')}
+      ${cell(mo.dosesGiven, s.mDoses)}${cell(mo.referrals, s.sumRefer)}${cell(mo.reachedPHC, s.mReached)}
+    </div><p class="fine">${e(s.monthNote)}</p>
+    ${m.timing.visits ? `<h3 class="sum-sub">${e(s.timeTitle)}</h3><div class="sum-grid">
+      ${cell(s.dur(m.timing.avgSeconds), s.avgTime)}${cell(s.dur(m.timing.totalSeconds), s.totalTime)}${cell(m.timing.visits, s.timedVisits)}
+    </div>` : ''}`;
   }
 }
 
@@ -345,11 +362,21 @@ function openForEdit(visitId) {
   if (running) speak(agent.readback());
 }
 
-function showSaved(ok, msg) {
+function showSaved(ok, msg, seconds = null) {
   const el = $('saveStatus');
   el.hidden = false;
   el.classList.toggle('bad', !ok);
-  el.textContent = ok ? S().savedLocal(fmtTime(Date.now())) : S().saveFailed(msg);
+  el.textContent = ok ? `${S().savedLocal(fmtTime(Date.now()))}${seconds ? ` ${S().tookTime(S().dur(seconds))}` : ''}` : S().saveFailed(msg);
+}
+
+// Referral outcome, from the follow-up buttons or a spoken yes/no to "did she reach the PHC?"
+async function noteReferral({ visitId, outcome, checkedOn = iso(new Date()) }) {
+  try {
+    await updateRecord(visitId, { referralOutcome: outcome, referralCheckedOn: checkedOn });
+  } catch (e) {
+    toast(S().saveFailed(e?.message || 'storage error'));
+  }
+  await refreshLists();
 }
 
 // ---------------- microphone choice and health ----------------
@@ -606,10 +633,11 @@ async function onTranscript(text, meta = {}) {
 
   const res = res0;
   let reply = res.say.join(' ');
+  if (res.referralOutcome) noteReferral(res.referralOutcome);
   if (res.saved) {
     try {
       await saveRecord(res.saved);
-      showSaved(true);
+      showSaved(true, null, res.saved.recordSeconds);
       lastRendered = {};
       renderForm();
       refreshLists();
@@ -925,6 +953,8 @@ async function init() {
   document.querySelectorAll('[data-start]').forEach((b) => b.addEventListener('click', () => beginVisit(b.dataset.start)));
   // follow-up "Start visit" and saved-record "Correct" buttons are rendered into lists
   document.addEventListener('click', (e) => {
+    const reach = e.target.closest('[data-reach]');
+    if (reach) { noteReferral({ visitId: reach.dataset.reach, outcome: reach.dataset.outcome }); return; }
     const fol = e.target.closest('[data-follow]');
     if (fol) {
       const r = records.find((x) => x.visitId === fol.dataset.follow);
