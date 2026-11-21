@@ -28,6 +28,13 @@ Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam, English), mixed with Engli
 10. **Measured data use.** Settings shows the mobile data the voice connection used this session and since the last
     save (sent / received). Each saved visit keeps its figure, and the Records tab shows the average per visit. ASHAs pay
     for their own data, so this is the cost question answered with a number.
+11. **Remembers the last visit.** Once she names the person, the card shows the last saved visit (date, weight,
+    vaccines, referral), and the read-back says the last weight too: *"weight 52 kilo, last visit 5 November it was
+    50 kilo"*. A mis-heard number or a real drop stands out at once. Vaccines given at earlier saved visits count, so
+    Td-1 given last month is not asked for again, and Td-2 is due four weeks later.
+12. **Vaccination-day list.** "tike ki list" (or the Follow-ups tab) gives everyone due a vaccine now, grouped by
+    vaccine: register people by the national schedule, minus what was given at saved visits. She uses it to call
+    families before the village health and nutrition day.
 
 No typing needed (a type box is there for when there is no internet). The app runs in the phone's browser and can be
 installed as a PWA on a low-end Android phone.
@@ -77,6 +84,7 @@ Open http://localhost:3000 in Chrome, tap the big mic, allow microphone access, 
 | "bukhar ke liye kya dawai dein?" | Fixed refusal: no medicine advice, ask the ANM / PHC doctor |
 | "aaj ki list" | Speaks the follow-ups, referrals first. For a referral from an earlier day it asks "did she reach the PHC?" |
 | "nahi" | Noted as not yet reached: she stays at the top of the referral list and is asked about again tomorrow |
+| "tike ki list" | Vaccines due, grouped by vaccine, with who needs each |
 
 Synthetic register (all invented): `1042` Sunita Devi (ANC), `1043` Sunita Kumari (newborn), `1051` Priya Sharma (ANC),
 `1057` Lakshmi Bai (child, 6 weeks), `1060` Fatima Begum (newborn, 2 days), `1066` Kavita Yadav (ANC, 36 wk),

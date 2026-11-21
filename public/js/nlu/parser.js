@@ -76,6 +76,11 @@ const DONE_HOGAYA = M('ho gaya|हो गया|hogaya|ho gya', ...P.doneEnd);
 const REPEAT = M('phir se|फिर se|dobara|दोबारा|repeat|again', 'फिर से', 'kya bola|क्या बोला', 'ಮತ್ತೆ|matte', 'once more', 'sunao|सुनाओ', 'padh~ ke sunao', 'read back', 'readback', ...P.repeat);
 const NEW_VISIT = M('naya|नया|new visit|विज़िट|विजिट|entry|form', 'agla|अगला ghar|घर', 'next house', 'ಹೊಸ ಭೇಟಿ', ...P.newVisit);
 const FOLLOWUPS = M('follow|फॉलो up|अप list|लिस्ट', 'aaj|आज ki|की list|लिस्ट', 'kaam|काम ki|की list|लिस्ट', 'due list', 'followup list', 'ಪಟ್ಟಿ', ...P.followups);
+const VACCINE_LIST = M(
+  'tika|tike|teeka|teeke|टीका|टीके|टीकों|vaccine|vaccines|vaccination|ಲಸಿಕೆ list|लिस्ट|suchi|सूची|ಪಟ್ಟಿ',
+  'tika|tike|teeka|teeke|टीका|टीके|टीकों|vaccine|ಲಸಿಕೆ ki|की|ka|का|ke|के|ದ list|लिस्ट|suchi|सूची',
+  'teekakaran|tikakaran|टीकाकरण list|लिस्ट|suchi|सूची', 'immunisation|immunization list', ...P.vaccineList,
+);
 const CANCEL = M('cancel', 'रद्द', 'radd', 'chhodo|छोड़ो', 'discard', ...P.cancel);
 const MED = K('dawa', 'dawai', 'dava', 'davai', 'दवा', 'दवाई', 'medicine', 'medicines', 'tablet', 'tablets', 'goli', 'goliyan', 'गोली', 'गोलियां', 'injection', 'इंजेक्शन', 'dose', 'dosage', 'खुराक', 'khurak', 'ilaj', 'ilaaj', 'इलाज', 'treatment', 'upchar', 'उपचार', 'ಔಷಧಿ', 'ಮಾತ್ರೆ', 'syrup', 'सिरप', 'antibiotic', 'paracetamol', 'crocin', 'ಚಿಕಿತ್ಸೆ', ...W.med);
 const QWORD = K('kya', 'क्या', 'kitni', 'कितनी', 'kitna', 'कितना', 'kaun', 'kaunsi', 'kaunsa', 'कौन', 'कौनसी', 'कौनसा', 'kaise', 'कैसे', 'what', 'which', 'how', 'should', 'shall', 'chahiye', 'चाहिए', 'ಏನು', 'ಯಾವ', 'ಎಷ್ಟು', '?', 'batao', 'बताओ', 'bataiye', 'बताइए', 'suggest', 'ಹೇಳಿ', ...W.qword);
@@ -367,6 +372,7 @@ export function extract(text, ctx = {}) {
   if (REPEAT.test(tokens)) intent.repeat = true;
   if (NEW_VISIT.test(tokens)) intent.newVisit = true;
   if (FOLLOWUPS.test(tokens)) intent.followups = true;
+  if (VACCINE_LIST.test(tokens)) intent.vaccineList = true;
   if (CANCEL.test(tokens)) intent.cancel = true;
   if (NONE_W.test(tokens)) intent.none = true;
   const hasMed = tokens.some((t) => MED.has(t));

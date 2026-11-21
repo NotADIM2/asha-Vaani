@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { VisitAgent } from '../public/js/agent.js';
 import { buildRegistry } from '../public/js/nlu/registry.js';
+import { vaccinationList } from '../public/js/nlu/schedule.js';
 import { followupsFrom, dueStatus, summarize, registerRows, toCsv } from '../public/js/store.js';
 import { SCREEN, screenText, LANGS, YES_WORD, t } from '../public/js/i18n.js';
 
@@ -243,6 +244,61 @@ test('CSV opens in Excel and cannot carry a formula', () => {
   assert.equal(lines[0], 'Name,Note');
   assert.equal(lines[1], '"Sunita, Devi","\'=HYPERLINK(""x"")"');
   assert.equal(lines[2], 'सुनीता,\'+91 98');
+});
+
+// ---------- history: earlier saved visits count; vaccination-day list ----------
+
+function visitOn(date, text, records = []) {
+  const a = new VisitAgent({ lang: 'en', registry, now: () => date, records: () => records });
+  a.handle(text);
+  return a.handle('yes').saved;
+}
+
+test('a vaccine given at an earlier saved visit is not asked for again', () => {
+  const first = visitOn(new Date(2026, 9, 20), 'Priya Sharma 1051 ANC weight 50 kilo TT first given next visit 19 November');
+  assert.deepEqual(first.vaccinesGiven, ['Td-1']);
+  const a = new VisitAgent({ lang: 'en', registry, now: () => NOW, records: () => [first] });
+  a.handle('Priya Sharma 1051 weight 52 kilo');
+  assert.deepEqual(a.vaccinesDue(), ['Td-2'], 'Td-2 is due 4 weeks after Td-1, not Td-1 again');
+  const soon = visitOn(new Date(2026, 10, 12), 'Priya Sharma 1051 ANC weight 50 kilo TT first given next visit 19 November');
+  const b = new VisitAgent({ lang: 'en', registry, now: () => NOW, records: () => [soon] });
+  b.handle('Priya Sharma 1051 weight 52 kilo');
+  assert.deepEqual(b.vaccinesDue(), [], 'Td-2 waits for the 4-week gap');
+  const c = new VisitAgent({ lang: 'en', registry, now: () => NOW, records: () => [first] });
+  c.handle('Priya Sharma 1051 TT given');
+  assert.deepEqual(c.form.vaccinesGiven, ['Td-2'], '"TT given" after an earlier Td-1 is the second dose');
+});
+
+test('the read-back says the last saved weight; the visit card shows the last visit', () => {
+  const first = visitOn(new Date(2026, 10, 5), 'Sunita Devi 1042 ANC weight 50 kilo next visit 19 November');
+  const a = new VisitAgent({ lang: 'en', registry, now: () => NOW, records: () => [first] });
+  const r = a.handle('Sunita Devi 1042 ANC weight 52 kilo next visit 3 December');
+  assert.match(r.say.join(' '), /weight fifty two kilo, on the last visit, November five, it was fifty kilo/);
+  assert.equal(a.lastVisit().visitId, first.visitId);
+  const fresh = new VisitAgent({ lang: 'en', registry, now: () => NOW, records: () => [] });
+  assert.doesNotMatch(fresh.handle('Sunita Devi 1042 ANC weight 52 kilo next visit 3 December').say.join(' '), /last visit/);
+});
+
+test('vaccination-day list: grouped by vaccine, register people included, saved doses removed', () => {
+  const before = vaccinationList(registry, [], NOW);
+  const td1 = before.find((g) => g.code === 'Td-1');
+  assert.ok(td1.people.some((p) => p.id === '1051'), 'Priya (no Td yet) is due Td-1');
+  assert.equal(before[0].code, 'Td-1', 'schedule order');
+  assert.ok(before.some((g) => g.code === 'Penta-1' && g.people.some((p) => p.id === '1057')), 'Lakshmi Bai, 6 weeks old, is due Penta-1');
+  const given = visitOn(NOW, 'Priya Sharma 1051 ANC weight 50 kilo TT first given next visit 17 December');
+  const after = vaccinationList(registry, [given], NOW);
+  assert.ok(!after.find((g) => g.code === 'Td-1')?.people.some((p) => p.id === '1051'), 'Td-1 given today: off the list');
+  const added = { visitId: 'n1', isNew: true, name: 'Radha', visitDate: TODAY, vaccinesDue: ['MR-1'] };
+  assert.ok(vaccinationList(registry, [added], NOW).find((g) => g.code === 'MR-1').people.some((p) => p.name === 'Radha'), 'people added by voice are listed from their visit');
+});
+
+test('"tike ki list" speaks the vaccine list in each language, and is not a visit note', () => {
+  for (const [l, said] of [['hi', 'tike ki list'], ['en', 'vaccine list'], ['kn', 'ಲಸಿಕೆ ಪಟ್ಟಿ'], ['ta', 'தடுப்பூசி பட்டியல்'], ['pa', 'ਟੀਕਿਆਂ ਦੀ ਸੂਚੀ'], ['gu', 'રસીની યાદી']]) {
+    const a = new VisitAgent({ lang: l, registry, now: () => NOW, records: () => [] });
+    const r = a.handle(said);
+    assert.ok(r.say[0].startsWith(t(l).vaccineList(['x'], 0).split('x')[0]), `${l}: ${r.say[0]}`);
+    assert.ok(!a.dirty, l);
+  }
 });
 
 test('every screen string exists in every language (English fallback)', () => {

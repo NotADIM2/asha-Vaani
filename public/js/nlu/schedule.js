@@ -92,6 +92,45 @@ export function suggestNextVisit(b, visitType, today = new Date()) {
   return iso(addDays(today, 7));
 }
 
+// What a person has already received: the register's history plus every saved visit. The date
+// Td-1 was given (needed for Td-2's 4-week gap) comes from the register or the visit that gave it.
+export function givenSoFar(b, visits = []) {
+  const given = [...(b?.vaccinesGiven || [])];
+  let td1Date = b?.td1Date || null;
+  for (const v of [...visits].sort((x, y) => (x.visitDate || '').localeCompare(y.visitDate || ''))) {
+    for (const code of v.vaccinesGiven || []) {
+      if (!given.some((g) => g.toUpperCase() === code.toUpperCase())) given.push(code);
+      if (/^T[DT]-1$/i.test(code) && !td1Date) td1Date = v.visitDate;
+    }
+  }
+  return { given, td1Date };
+}
+
+const VACCINE_ORDER = [...PREGNANCY_VACCINES, ...CHILD_SCHEDULE.map(([, c]) => c)];
+
+// Vaccination-day list: everyone due a vaccine now, grouped by vaccine in schedule order, for
+// mobilising families before the village health and nutrition day. Register people are
+// worked out from the schedule; people added by voice use their latest visit's "due" list.
+export function vaccinationList(registry, records, today = new Date()) {
+  const groups = new Map();
+  const add = (code, p) => { if (!groups.has(code)) groups.set(code, []); groups.get(code).push(p); };
+  const byId = new Map();
+  for (const r of records) if (r.beneficiaryId) byId.set(r.beneficiaryId, [...(byId.get(r.beneficiaryId) || []), r]);
+  for (const b of registry) {
+    const { given, td1Date } = givenSoFar(b, byId.get(b.id) || []);
+    const due = b.kind === 'pregnant' ? vaccinesDueInPregnancy(given, td1Date, today) : b.dob ? vaccinesDueForChild(ageDays(b, today), given) : [];
+    for (const code of due) add(code, { id: b.id, name: b.name, ward: b.ward });
+  }
+  const latestNew = new Map();
+  for (const r of [...records].sort((x, y) => (y.visitDate || '').localeCompare(x.visitDate || ''))) {
+    const k = r.beneficiaryId || r.name;
+    if (r.isNew && k && !registry.some((b) => b.id === r.beneficiaryId) && !latestNew.has(k)) latestNew.set(k, r);
+  }
+  for (const r of latestNew.values()) for (const code of r.vaccinesDue || []) add(code, { id: r.beneficiaryId || null, name: r.name || null, ward: r.ward ?? null });
+  const rank = (c) => { const i = VACCINE_ORDER.indexOf(c); return i < 0 ? 999 : i; };
+  return [...groups.entries()].sort(([a], [b]) => rank(a) - rank(b)).map(([code, people]) => ({ code, people }));
+}
+
 export function ageDays(b, today = new Date()) {
   return b?.dob ? daysBetween(toDate(b.dob), today) : null;
 }

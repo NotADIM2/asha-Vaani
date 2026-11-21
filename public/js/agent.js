@@ -2,7 +2,7 @@
 // Pure logic, no I/O: the browser app and the test suite drive it the same way.
 import { extract } from './nlu/parser.js';
 import { numericDangers } from './nlu/danger.js';
-import { vaccinesDueForChild, vaccinesDueInPregnancy, suggestNextVisit, ageDays, CHILD_SCHEDULE } from './nlu/schedule.js';
+import { vaccinesDueForChild, vaccinesDueInPregnancy, suggestNextVisit, ageDays, givenSoFar, vaccinationList, CHILD_SCHEDULE } from './nlu/schedule.js';
 import { iso } from './nlu/dates.js';
 import { phon, transliterate } from './nlu/translit.js';
 import { t, dangersSpoken, vaccineSpoken, dateSpoken } from './i18n.js';
@@ -51,13 +51,34 @@ function resolveVaccine(base, dose, given) {
 
 export class VisitAgent {
   // `clock` (ms) times how long recording a visit takes; `now` is the calendar date.
-  constructor({ lang = 'hi', registry = [], now = () => new Date(), followups = () => [], clock = () => Date.now() } = {}) {
+  // `records` returns the visits saved on this phone (for history and the vaccine list).
+  constructor({ lang = 'hi', registry = [], now = () => new Date(), followups = () => [], clock = () => Date.now(), records = () => [] } = {}) {
     this.lang = lang;
     this.registry = registry;
     this.now = now;
     this.clock = clock;
     this.getFollowups = followups;
+    this.getRecords = records;
     this.reset();
+  }
+
+  // Earlier saved visits of the person in this visit, latest first (never the visit itself).
+  priorVisits() {
+    const f = this.form;
+    if (!f.beneficiaryId) return [];
+    // correcting an old visit: only what came before it counts
+    const upTo = this.editing?.visitDate || '9999';
+    return this.getRecords().filter((r) => r.beneficiaryId === f.beneficiaryId && r.visitId !== f.visitId && (r.visitDate || '') <= upTo)
+      .sort((a, b) => (b.visitDate || '').localeCompare(a.visitDate || '') || (b.savedAt || '').localeCompare(a.savedAt || ''));
+  }
+
+  lastVisit() {
+    return this.priorVisits()[0] || null;
+  }
+
+  // Register history plus every earlier saved visit.
+  givenBefore() {
+    return givenSoFar(this.form.beneficiary, this.priorVisits());
   }
 
   reset() {
@@ -164,12 +185,13 @@ export class VisitAgent {
     const f = this.form;
     const b = f.beneficiary;
     const today = this.now();
-    const givenAll = [...(b?.vaccinesGiven || []), ...f.vaccinesGiven];
+    const before = this.givenBefore();
+    const givenAll = [...before.given, ...f.vaccinesGiven];
     let sched = null;
     const g = this.group();
     if (g === 'pregnancy') {
-      const td1 = f.vaccinesGiven.some((v) => /^T[DT]-1$/i.test(v)) ? today : b?.td1Date || null;
-      if (b || f.vaccinesGiven.length || f.gestWeeks) sched = vaccinesDueInPregnancy(givenAll, td1, today);
+      const td1 = f.vaccinesGiven.some((v) => /^T[DT]-1$/i.test(v)) ? today : before.td1Date;
+      if (b || f.vaccinesGiven.length || f.gestWeeks || before.given.length) sched = vaccinesDueInPregnancy(givenAll, td1, today);
     } else {
       const age = f.babyAgeDays ?? ageDays(b, today);
       if (age !== null) sched = vaccinesDueForChild(age, givenAll);
@@ -285,7 +307,7 @@ export class VisitAgent {
     if (x.bp && (!f.bp || f.bp.sys !== x.bp.sys || f.bp.dia !== x.bp.dia)) { f.bp = x.bp; changed.push('bp'); }
 
     if (x.vaccines) {
-      const givenAll = [...(f.beneficiary?.vaccinesGiven || []), ...f.vaccinesGiven];
+      const givenAll = [...this.givenBefore().given, ...f.vaccinesGiven];
       for (const v of x.vaccines) {
         const code = resolveVaccine(v.base, v.dose, v.status === 'given' ? givenAll : [...givenAll]);
         if (v.status === 'given') {
@@ -348,7 +370,12 @@ export class VisitAgent {
         return [nm, f.beneficiaryId ? L.idPart(f.beneficiaryId) : null].filter(Boolean).join(', ');
       }
       case 'visitType': return f.visitType ? L.visitPart(f.visitType) : null;
-      case 'weightKg': return f.weightKg !== null ? L.weightPart(f.weightKg) : null;
+      case 'weightKg': {
+        if (f.weightKg === null) return null;
+        // the last saved weight, said alongside, so a mis-hearing or a real change stands out
+        const last = this.lastVisit();
+        return last?.weightKg != null ? `${L.weightPart(f.weightKg)}, ${L.lastWeight(last.weightKg, dateSpoken(last.visitDate, lang))}` : L.weightPart(f.weightKg);
+      }
       case 'bp': return f.bp ? L.bpPart(f.bp) : null;
       case 'hb': return f.hb !== null ? L.hbPart(f.hb) : null;
       case 'tempC': return f.tempC !== null ? L.tempPart(f.tempC) : null;
@@ -455,6 +482,12 @@ export class VisitAgent {
         const say1 = answer === 'reached' ? L.reachedNoted(ref.name) : L.notReachedNoted(ref.name);
         return this.out([say1], { referralOutcome: { visitId: ref.visitId, outcome: answer, checkedOn: iso(now) } });
       }
+    }
+    if (r.intent.vaccineList) {
+      if (!wasDirty) f.transcript.pop();
+      const groups = vaccinationList(this.registry, this.getRecords(), now);
+      const items = groups.slice(0, 4).map((g) => L.vaccineGroup(vaccineSpoken(g.code, this.lang), g.people.map((p) => p.name || p.id)));
+      return this.out([L.vaccineList(items, Math.max(0, groups.length - 4))]);
     }
     if (r.intent.followups) {
       // asking for the list is not part of a visit note

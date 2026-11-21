@@ -2,6 +2,7 @@
 // and a live time-to-first-audio readout. Screens: start, visit, follow-ups, records, settings.
 import { VisitAgent } from './agent.js';
 import { buildRegistry, registryKeyterms } from './nlu/registry.js';
+import { vaccinationList } from './nlu/schedule.js';
 import { Mic, Vad, Player, listMics, judgeLevel } from './audio.js';
 import { saveRecord, updateRecord, listRecords, deleteAll, followupsFrom, summarize, saveDraft, loadDraft, clearDraft, registerRows, toCsv } from './store.js';
 import { dangerLabel } from './nlu/danger.js';
@@ -24,7 +25,7 @@ const registry = buildRegistry(today);
 let records = [];
 let lang = pref.get('lang', 'hi');
 let talkMode = pref.get('talkMode', 'handsfree');
-const agent = new VisitAgent({ lang, registry, followups: () => followupsFrom(records, iso(new Date())) });
+const agent = new VisitAgent({ lang, registry, followups: () => followupsFrom(records, iso(new Date())), records: () => records });
 
 let config = { gnani: false, llm: false, ttsSampleRate: 24000 };
 let ctx = null;
@@ -169,8 +170,11 @@ function fieldRows(v) {
     ...(v.dangersAbsent || []).map((d) => `<span class="chip denied">${e(s.checkedNo)}: ${e(dangerLabel(d, lang))}</span>`),
   ].join('');
   const who = v.beneficiaryId || v.name ? `${v.name || '—'}${v.beneficiaryId ? ` · ID ${v.beneficiaryId}` : ''}${v.ward != null ? ` · ward ${v.ward}` : ''}${v.isNew ? ` · ${s.newPerson}` : ''}` : '';
+  const lv = v.lastVisit;
+  const last = lv ? [fmtDate(lv.visitDate), VISIT_LABEL[lv.visitType], lv.weightKg != null && `${lv.weightKg} kg`, lv.vaccinesGiven?.length && `${lv.vaccinesGiven.join(', ')} ${s.given}`, lv.referToPHC && s.referred].filter(Boolean).join(' · ') : '';
   return [
     ['beneficiary', s.fBeneficiary, e(who)],
+    ['lastVisit', s.fLast, e(last), true],
     ['visitType', s.fVisitType, v.visitType ? e(VISIT_LABEL[v.visitType] + (v.visitTypeInferred ? ` (${s.fromRegister})` : '')) : ''],
     ['weightKg', s.fWeight, v.weightKg != null ? `${e(v.weightKg)} kg` : ''],
     ['vitals', s.fVitals, e(vitals), true],
@@ -191,7 +195,7 @@ const needList = (missing) => missing.map((m) => S()[NEED_KEY[m]] || m).join(', 
 let lastRendered = {};
 function renderForm(changed = []) {
   const f = agent.form;
-  const view = { ...f, ward: f.beneficiary?.ward, vaccinesDue: agent.vaccinesDue() };
+  const view = { ...f, ward: f.beneficiary?.ward, vaccinesDue: agent.vaccinesDue(), lastVisit: agent.lastVisit() };
   const vitalKeys = ['bp', 'hb', 'tempC', 'respRate', 'gestWeeks', 'babyAgeDays', 'ifaGiven'];
   const flashOf = (key, val) => {
     const hit = changed.includes(key) || (key === 'vitals' && changed.some((c) => vitalKeys.includes(c))) || (lastRendered[key] !== undefined && lastRendered[key] !== val);
@@ -288,11 +292,25 @@ function renderFollowups() {
     : groups.length
       ? groups.map(([k, xs]) => `<h3 class="group">${escapeHtml(s[k])} (${xs.length})</h3><ul class="items">${xs.map((x) => followItem(x)).join('')}</ul>`).join('')
       : `<p class="empty">${escapeHtml(s.fuEmpty)}</p>`;
+  renderVaccines();
   const attention = fu.filter((x) => x.refer || x.status === 'overdue' || x.status === 'today');
   $('dueCard').hidden = !attention.length;
   $('dueList').innerHTML = attention.slice(0, 3).map((x) => followItem(x, { compact: true })).join('');
   $('followCount').hidden = !attention.length;
   $('followCount').textContent = attention.length;
+}
+
+// Vaccination-day list: who to call before the village health day, grouped by vaccine.
+function renderVaccines() {
+  const s = S();
+  const e = escapeHtml;
+  const groups = vaccinationList(registry, records, new Date());
+  $('vaccineGroups').innerHTML = groups.length
+    ? groups.map((g) => `<h3 class="group">${e(g.code)} (${g.people.length})</h3><ul class="items">${g.people.map((p) => `<li class="item">
+        <span class="who"><b>${e(p.name || '—')}${p.id ? ` · ID ${e(p.id)}` : ''}</b><span>${p.ward != null ? e(`ward ${p.ward}`) : ''}</span></span>
+        ${p.id && registry.some((b) => b.id === p.id) ? `<button class="btn small" data-person="${e(p.id)}">${e(s.startThis)}</button>` : ''}
+      </li>`).join('')}</ul>`).join('')
+    : `<p class="empty">${e(s.vacEmpty)}</p>`;
 }
 
 function recordHtml(r) {
@@ -1030,6 +1048,12 @@ async function init() {
   document.addEventListener('click', (e) => {
     const reach = e.target.closest('[data-reach]');
     if (reach) { noteReferral({ visitId: reach.dataset.reach, outcome: reach.dataset.outcome }); return; }
+    const per = e.target.closest('[data-person]');
+    if (per) {
+      const b = registry.find((x) => x.id === per.dataset.person);
+      if (b) beginVisit(b.defaultVisit, { beneficiaryId: b.id, name: b.name });
+      return;
+    }
     const fol = e.target.closest('[data-follow]');
     if (fol) {
       const r = records.find((x) => x.visitId === fol.dataset.follow);
