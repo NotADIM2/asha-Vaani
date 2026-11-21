@@ -204,6 +204,17 @@ test('monthly counts: this month only, doses and referrals reached, still no nam
   assert.ok(!/Rekha|Meena|Priya|1083|1078|1051/.test(JSON.stringify(m)));
 });
 
+test('data per visit: averaged over measured visits, kept when a visit is corrected', () => {
+  const m = summarize([{ visitId: 'a', visitDate: TODAY, dataBytes: 3_000_000 }, { visitId: 'b', visitDate: TODAY, dataBytes: 1_000_000 }, { visitId: 'c', visitDate: TODAY, dataBytes: null }], TODAY);
+  assert.deepEqual(m.data, { visits: 2, avgBytes: 2_000_000, totalBytes: 4_000_000 });
+  const rec = { ...saveVisit('Sunita Devi 1042 ANC weight 52 kilo next visit 3 December'), dataBytes: 2_500_000 };
+  assert.equal(saveVisit('Sunita Devi 1042 ANC weight 52 kilo next visit 3 December').dataBytes, null, 'the app measures it, not the agent');
+  const a = mk();
+  a.edit(rec);
+  a.handle('no, weight 53 kilo');
+  assert.equal(a.handle('yes').saved.dataBytes, 2_500_000);
+});
+
 test('register page: one day, in saved order, one cell per column', () => {
   const recs = [
     { ...REFERRED, visitDate: TODAY, savedAt: '2026-11-19T11:00:00Z', bp: { sys: 150, dia: 100 }, weightKg: 60, referralOutcome: 'not_reached' },

@@ -25,6 +25,9 @@ Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam, English), mixed with Engli
 9. **Register page.** One day's visits as a table in register column order, to copy into the official register or
    show the ANM, as a CSV download (opens in Excel with Indic text intact) or a clean printout. She speaks once and
    copies, so nothing is entered twice from memory.
+10. **Measured data use.** Settings shows the mobile data the voice connection used this session and since the last
+    save (sent / received). Each saved visit keeps its figure, and the Records tab shows the average per visit. ASHAs pay
+    for their own data, so this is the cost question answered with a number.
 
 No typing needed (a type box is there for when there is no internet). The app runs in the phone's browser and can be
 installed as a PWA on a low-end Android phone.

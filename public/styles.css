@@ -155,6 +155,7 @@ li.empty, p.empty { padding: 16px; border: 1px dashed var(--line); border-radius
 .sum-grid div { padding: 8px 10px; border-radius: 8px; background: var(--bg); }
 .sum-grid b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }
 .sum-grid span { font-size: 13px; color: var(--muted); }
+.sum-grid b small { display: block; font-size: 12px; font-weight: 500; color: var(--muted); }
 .records details { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
 .records details[open] { border-color: #c9cecb; }
 .records summary { list-style: none; cursor: pointer; padding: 12px; display: flex; justify-content: space-between; gap: 10px; }

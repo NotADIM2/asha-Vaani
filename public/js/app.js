@@ -69,6 +69,19 @@ let commitTimer = null;
 let sttFails = 0;
 let sttWorked = false; // Prisma returned at least one transcript this session
 let sttFallback = false;
+// Data use: bytes of audio and messages on the voice connection (network overhead not
+// counted), for this session and since the last save, so the cost of a visit is a number.
+const dataUse = { session: { up: 0, down: 0 }, visit: { up: 0, down: 0 } };
+const utf8 = new TextEncoder();
+function countData(dir, data) {
+  const n = typeof data === 'string' ? utf8.encode(data).length : data.byteLength;
+  dataUse.session[dir] += n;
+  dataUse.visit[dir] += n;
+}
+function send(data) {
+  ws.send(data);
+  countData('up', data);
+}
 
 // ---------------- UI helpers ----------------
 const S = () => screenText(lang);
@@ -287,7 +300,7 @@ function recordHtml(r) {
   const e = escapeHtml;
   const rows = fieldRows({ ...r, dangers: r.dangerSigns, dangersAbsent: r.dangerSignsDenied });
   const heard = (r.transcript || []).slice(-3).map((t) => `<p class="heard">“${e(typeof t === 'string' ? t : t?.text || '')}”</p>`).join('');
-  const store = [r.recordSeconds ? `${s.recordedIn(s.dur(r.recordSeconds))}.` : '', s.stored, r.updatedAt ? s.edited(fmtTime(r.updatedAt)) : '', r.expiresAt ? s.deletesOn(fmtDate(iso(new Date(r.expiresAt)))) : ''].filter(Boolean).join(' ');
+  const store = [r.recordSeconds ? `${s.recordedIn(s.dur(r.recordSeconds))}.` : '', r.dataBytes ? s.dataOf(fmtBytes(r.dataBytes)) : '', s.stored, r.updatedAt ? s.edited(fmtTime(r.updatedAt)) : '', r.expiresAt ? s.deletesOn(fmtDate(iso(new Date(r.expiresAt)))) : ''].filter(Boolean).join(' ');
   return `<details>
     <summary><span><b>${e(r.name || '—')}${r.beneficiaryId ? ` · ID ${e(r.beneficiaryId)}` : ''}</b>
       <span>${e(VISIT_LABEL[r.visitType] || '')} · ${e(fmtDate(r.visitDate))}${r.referToPHC ? ` · <span class="referred">${e(s.referred)}</span>` : ''}</span></span><span aria-hidden="true">›</span></summary>
@@ -329,8 +342,26 @@ function renderRecords() {
     </div><p class="fine">${e(s.monthNote)}</p>
     ${m.timing.visits ? `<h3 class="sum-sub">${e(s.timeTitle)}</h3><div class="sum-grid">
       ${cell(s.dur(m.timing.avgSeconds), s.avgTime)}${cell(s.dur(m.timing.totalSeconds), s.totalTime)}${cell(m.timing.visits, s.timedVisits)}
+      ${m.data.visits ? cell(fmtBytes(m.data.avgBytes), s.dataAvg) : ''}
     </div>` : ''}`;
   }
+  renderData();
+}
+
+function fmtBytes(n) {
+  if (n == null) return '–';
+  return n < 1024 * 1024 ? `${Math.max(1, Math.round(n / 1024))} KB` : `${(n / 1048576).toFixed(1)} MB`;
+}
+
+// Settings → Data use: live while the voice connection runs (refreshed every 2 s on that tab).
+function renderData() {
+  const s = S();
+  const e = escapeHtml;
+  const both = (x) => `${fmtBytes(x.up + x.down)}<small>↑ ${fmtBytes(x.up)} · ↓ ${fmtBytes(x.down)}</small>`;
+  const avg = records.length ? summarize(records, iso(new Date())).data.avgBytes : null;
+  $('dataUse').innerHTML = `<div><b>${both(dataUse.session)}</b><span>${e(s.dataSession)}</span></div>
+    <div><b>${both(dataUse.visit)}</b><span>${e(s.dataVisit)}</span></div>
+    <div><b>${e(fmtBytes(avg))}</b><span>${e(s.dataAvg)}</span></div>`;
 }
 
 // ---------- register page: one day's visits as a table, CSV or print ----------
@@ -372,6 +403,7 @@ function showTab(name) {
   document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x.dataset.tab === name));
   document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.id === `tab-${name}`));
   window.scrollTo({ top: 0 });
+  if (name === 'settings') renderData();
 }
 
 // Begin a visit from a button: the chosen kind, or the person from a follow-up.
@@ -527,7 +559,7 @@ function stopSpeaking() {
   deferTimer = null;
   if (player) {
     const id = player.stop();
-    if (id && ws?.readyState === 1) ws.send(JSON.stringify({ type: 'cancel', id }));
+    if (id && ws?.readyState === 1) send(JSON.stringify({ type: 'cancel', id }));
   }
   if (window.speechSynthesis?.speaking) speechSynthesis.cancel();
   speakingUntil = performance.now() + 600; // a little echo tail can still arrive
@@ -587,7 +619,7 @@ function speak(text, { speechEndAt = null, ack = false } = {}) {
       return;
     }
     caching.set(id, { key: `${lang}|${text}`, chunks: [] });
-    ws.send(JSON.stringify({ type: 'say', id, text, lang }));
+    send(JSON.stringify({ type: 'say', id, text, lang }));
   } else if ('speechSynthesis' in window) {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = LANGS[lang].browser;
@@ -611,7 +643,7 @@ function prewarm() {
     setTimeout(() => {
       const id = sayId++;
       caching.set(id, { key, chunks: [], silent: true });
-      ws.send(JSON.stringify({ type: 'say', id, text, lang }));
+      send(JSON.stringify({ type: 'say', id, text, lang }));
     }, i === 0 ? 150 : 1200 + i * 600);
   });
 }
@@ -671,8 +703,11 @@ async function onTranscript(text, meta = {}) {
   let reply = res.say.join(' ');
   if (res.referralOutcome) noteReferral(res.referralOutcome);
   if (res.saved) {
+    // data since the last save belongs to this visit; only measurable on the Gnani connection
+    if (!before.editing) res.saved.dataBytes = config.gnani ? dataUse.visit.up + dataUse.visit.down : null;
     try {
       await saveRecord(res.saved);
+      if (!before.editing) dataUse.visit = { up: 0, down: 0 };
       showSaved(true, null, res.saved.recordSeconds);
       lastRendered = {};
       renderForm();
@@ -709,10 +744,11 @@ function connect() {
     ws = new WebSocket(`${proto}://${location.host}/ws${codeQuery}`);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => {
-      ws.send(JSON.stringify({ type: 'start', lang, keyterms: [...registryKeyterms(registry), ...HEALTH_TERMS] }));
+      send(JSON.stringify({ type: 'start', lang, keyterms: [...registryKeyterms(registry), ...HEALTH_TERMS] }));
       resolve();
     };
     ws.onmessage = (e) => {
+      countData('down', e.data);
       if (typeof e.data !== 'string') {
         const id = new DataView(e.data).getUint32(0, true);
         const pcm = new Int16Array(e.data.slice(4));
@@ -831,7 +867,7 @@ function onFrame({ pcm, rms }) {
     toast('Mic paused after 1 minute of silence (saves credits). Tap the mic to continue.');
     return;
   }
-  ws.send(pcm);
+  send(pcm);
 }
 
 function useBrowserListening() {
@@ -882,7 +918,7 @@ async function start() {
       if (!config.gnani || ws?.readyState !== 1 || talkMode !== 'handsfree' || player?.playing) return;
       clearTimeout(commitTimer);
       commitTimer = setTimeout(() => {
-        if (!vad.speaking && ws?.readyState === 1) ws.send(JSON.stringify({ type: 'commit' }));
+        if (!vad.speaking && ws?.readyState === 1) send(JSON.stringify({ type: 'commit' }));
       }, agent.state === 'dictate' ? 550 : 0);
     },
   });
@@ -912,7 +948,7 @@ function setLang(l, announce = true) {
   pref.set('lang', l);
   $('lang').value = l;
   document.documentElement.lang = l;
-  if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'lang', lang: l, keyterms: [...registryKeyterms(registry), ...HEALTH_TERMS] }));
+  if (ws?.readyState === 1) send(JSON.stringify({ type: 'lang', lang: l, keyterms: [...registryKeyterms(registry), ...HEALTH_TERMS] }));
   if (recog) { recog.lang = LANGS[l].browser; try { recog.stop(); } catch { /* restarts onend */ } }
   if (running && announce) speak(agent.L.greet);
   setStatus(running ? 'listening' : 'idle');
@@ -955,7 +991,7 @@ async function init() {
   const release = () => {
     if (talkMode === 'ptt' && pttDown) {
       pttDown = false;
-      if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'commit' }));
+      if (ws?.readyState === 1) send(JSON.stringify({ type: 'commit' }));
       setStatus('thinking');
     }
   };
@@ -1014,6 +1050,7 @@ async function init() {
     try { await clearDraft(); } catch { /* nothing to clear */ }
     $('draftCard').hidden = true;
   });
+  setInterval(() => { if (running && $('tab-settings').classList.contains('active')) renderData(); }, 2000);
   window.addEventListener('online', () => { setNet(); toast(S().backOnline); });
   window.addEventListener('offline', () => { setNet(); toast(S().wentOffline); });
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});

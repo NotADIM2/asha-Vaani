@@ -108,7 +108,7 @@ export class VisitAgent {
       f.vaccinesDueStated = [...(rec.vaccinesDue || [])];
       if (!f.vaccinesDueStated.length) f.vaccinesDueNone = true;
     }
-    this.editing = { visitDate: rec.visitDate, savedAt: rec.savedAt, recordSeconds: rec.recordSeconds ?? null };
+    this.editing = { visitDate: rec.visitDate, savedAt: rec.savedAt, recordSeconds: rec.recordSeconds ?? null, dataBytes: rec.dataBytes ?? null };
     this.state = 'confirm';
     return f;
   }
@@ -403,6 +403,8 @@ export class VisitAgent {
       // from her first word to the save; a correction keeps the original time
       recordSeconds: this.editing ? this.editing.recordSeconds : f.heardAt ? Math.max(1, Math.round((this.clock() - f.heardAt) / 1000)) : null,
       turns: f.transcript.length,
+      // measured by the app on the voice connection; a correction keeps the original figure
+      dataBytes: this.editing ? this.editing.dataBytes : null,
       lang: this.lang,
       visitDate: this.editing?.visitDate || iso(this.now()),
       savedAt: this.editing?.savedAt || new Date().toISOString(),

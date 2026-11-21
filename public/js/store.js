@@ -236,6 +236,8 @@ export function summarize(records, todayIso) {
   const month = records.filter((r) => (r.visitDate || '').slice(0, 7) === todayIso.slice(0, 7));
   const timed = records.map((r) => r.recordSeconds).filter((s) => typeof s === 'number' && s > 0);
   const total = timed.reduce((a, b) => a + b, 0);
+  const measured = records.map((r) => r.dataBytes).filter((b) => typeof b === 'number' && b > 0);
+  const bytes = measured.reduce((a, b) => a + b, 0);
   return {
     visits: records.length,
     byType: countByType(records),
@@ -253,5 +255,6 @@ export function summarize(records, todayIso) {
       reachedPHC: month.filter((r) => r.referToPHC && r.referralOutcome === 'reached').length,
     },
     timing: { visits: timed.length, avgSeconds: timed.length ? Math.round(total / timed.length) : null, totalSeconds: total },
+    data: { visits: measured.length, avgBytes: measured.length ? Math.round(bytes / measured.length) : null, totalBytes: bytes },
   };
 }
