@@ -3,7 +3,7 @@
 import { VisitAgent } from './agent.js';
 import { buildRegistry, registryKeyterms } from './nlu/registry.js';
 import { Mic, Vad, Player, listMics, judgeLevel } from './audio.js';
-import { saveRecord, updateRecord, listRecords, deleteAll, followupsFrom, summarize, saveDraft, loadDraft, clearDraft } from './store.js';
+import { saveRecord, updateRecord, listRecords, deleteAll, followupsFrom, summarize, saveDraft, loadDraft, clearDraft, registerRows, toCsv } from './store.js';
 import { dangerLabel } from './nlu/danger.js';
 import { iso } from './nlu/dates.js';
 import { tokenize } from './nlu/translit.js';
@@ -233,6 +233,7 @@ async function refreshLists() {
   try { records = await listRecords(); } catch (e) { listError = e?.message || String(e); records = []; }
   renderFollowups();
   renderRecords();
+  renderRegister();
   showDraftCard();
 }
 
@@ -330,6 +331,41 @@ function renderRecords() {
       ${cell(s.dur(m.timing.avgSeconds), s.avgTime)}${cell(s.dur(m.timing.totalSeconds), s.totalTime)}${cell(m.timing.visits, s.timedVisits)}
     </div>` : ''}`;
   }
+}
+
+// ---------- register page: one day's visits as a table, CSV or print ----------
+let regDay = iso(new Date());
+function regData() {
+  const s = S();
+  return registerRows(records, regDay, { label: (d) => dangerLabel(d, lang), words: { yes: s.regYes, reached: s.regReached, notYet: s.regNotYet } });
+}
+
+function renderRegister() {
+  const s = S();
+  const e = escapeHtml;
+  $('registerCard').hidden = listError !== null || !records.length;
+  $('regDate').value = regDay;
+  $('regDate').max = iso(new Date());
+  const rows = regData();
+  $('regCsv').disabled = !rows.length;
+  $('regPrint').disabled = !rows.length;
+  $('regView').innerHTML = rows.length
+    ? `<table><thead><tr>${s.regCols.map((c) => `<th scope="col">${e(c)}</th>`).join('')}</tr></thead>
+      <tbody>${rows.map((r) => `<tr>${r.map((c) => `<td>${e(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+    : `<p class="empty">${e(s.regEmpty)}</p>`;
+}
+
+function downloadRegister() {
+  const rows = regData();
+  if (!rows.length) return;
+  const url = URL.createObjectURL(new Blob([toCsv(S().regCols, rows)], { type: 'text/csv;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `asha-register-${regDay}.csv`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function showTab(name) {
@@ -930,6 +966,9 @@ async function init() {
   $('talkMode').addEventListener('change', (e) => { talkMode = e.target.value; pref.set('talkMode', talkMode); setStatus(running ? 'listening' : 'idle'); });
   $('phcNumber').addEventListener('change', (e) => { const n = phoneOnly(e.target.value); e.target.value = n; pref.set('phc', n); $('callPhc').href = `tel:${n}`; });
   $('retention').addEventListener('change', (e) => pref.set('retentionDays', e.target.value));
+  $('regDate').addEventListener('change', (e) => { if (e.target.value) { regDay = e.target.value; renderRegister(); } });
+  $('regCsv').addEventListener('click', downloadRegister);
+  $('regPrint').addEventListener('click', () => { showTab('records'); window.print(); });
   $('wipe').addEventListener('click', async () => {
     if (!confirm(S().wipeAsk)) return;
     try { await deleteAll(); toast(S().wiped); } catch (e) { toast(S().readFailed(e?.message || e)); }

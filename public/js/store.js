@@ -184,6 +184,43 @@ export function followupsFrom(records, todayIso) {
     .sort((a, b) => (b.refer - a.refer) || (STATUS_ORDER[a.status] - STATUS_ORDER[b.status]) || (a.when || '').localeCompare(b.when || ''));
 }
 
+// One day's visits as register rows, in the order they were saved, so she can copy them into
+// the official register or show the ANM. Columns follow `regCols` in i18n.js. `label` turns a
+// danger-sign id into words; `words` gives the referral cell text.
+export function registerRows(records, dayIso, { label = (d) => d, words = { yes: 'Yes', reached: 'Yes, reached PHC', notYet: 'Yes, not yet reached' } } = {}) {
+  const day = records.filter((r) => r.visitDate === dayIso)
+    .sort((a, b) => (a.savedAt || '').localeCompare(b.savedAt || ''));
+  return day.map((r, i) => [
+    String(i + 1),
+    r.visitDate || '',
+    r.beneficiaryId || '',
+    r.name || '',
+    r.ward ?? '',
+    r.visitType || '',
+    r.weightKg ?? '',
+    r.bp ? `${r.bp.sys}/${r.bp.dia}` : '',
+    r.hb ?? '',
+    r.tempC ?? '',
+    [r.gestWeeks != null && `${r.gestWeeks} wk`, r.babyAgeDays != null && `baby ${r.babyAgeDays} d`, r.respRate != null && `breaths ${r.respRate}/min`, r.ifaGiven && 'IFA'].filter(Boolean).join('; '),
+    (r.vaccinesGiven || []).join(', '),
+    (r.vaccinesDue || []).join(', '),
+    (r.dangerSigns || []).map(label).join(', '),
+    !r.referToPHC ? '' : r.referralOutcome === 'reached' ? words.reached : r.referralOutcome === 'not_reached' ? words.notYet : words.yes,
+    r.nextVisit || '',
+  ].map(String));
+}
+
+// CSV that opens correctly in Excel (UTF-8 BOM for Indic scripts). A cell that starts like a
+// formula is prefixed with ' so a spreadsheet shows it as text instead of running it.
+export function toCsv(header, rows) {
+  const cell = (v) => {
+    let s = String(v ?? '');
+    if (/^[=+\-@\t\r]/.test(s)) s = `'${s}`;
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return `﻿${[header, ...rows].map((row) => row.map(cell).join(',')).join('\r\n')}\r\n`;
+}
+
 function countByType(records) {
   const byType = { ANC: 0, PNC: 0, HBNC: 0, IMM: 0 };
   for (const r of records) if (r.visitType in byType) byType[r.visitType]++;

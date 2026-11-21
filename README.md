@@ -22,6 +22,9 @@ Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam, English), mixed with Engli
    the average and total on the Records tab. "Faster than paper" becomes a number, not a claim.
 8. **This month's activity counts** for her monthly incentive claim: visits by type, vaccine doses given, referrals
    advised and referrals that reached the PHC. Counts only, no rupee amounts (they differ by state).
+9. **Register page.** One day's visits as a table in register column order, to copy into the official register or
+   show the ANM, as a CSV download (opens in Excel with Indic text intact) or a clean printout. She speaks once and
+   copies, so nothing is entered twice from memory.
 
 No typing needed (a type box is there for when there is no internet). The app runs in the phone's browser and can be
 installed as a PWA on a low-end Android phone.
@@ -192,6 +195,7 @@ Same flow in plain text:
 | Follow-up | From each person's latest visit; grouped Referral advised / Overdue / Today / Next 7 days / Later, with one shared `dueStatus`. A referral keeps the date it was advised | `store.followupsFrom` |
 | Referral outcome | "Did she reach the PHC?" from the day after the referral, by voice (yes/no in all ten languages) or button. "Reached" closes the referral; "not yet" keeps it on top and asks again the next day. Stored on the same record without moving its delete date | `agent.handle` (`referralCheck`), `store.updateRecord` |
 | Recording time | Seconds from her first word to the save, stored with the visit (a correction keeps the original time) | `agent.record` |
+| Register page | Records tab → pick a day → table, CSV or print. Columns are a demo set. The CSV has a UTF-8 BOM, and cells that start like a formula are made text. The copy is not encrypted, and the screen says so | `store.registerRows`, `store.toCsv` |
 | Summary | Counts on this phone only: visits by type, referrals advised, overdue, due in 7 days; this month's visits, doses given, referrals and referrals reached; average and total recording time. No names, no ranking, no location | `store.summarize` |
 
 **Sync:** there is none. Records live only in this browser on this phone, encrypted, and are deleted after the retention

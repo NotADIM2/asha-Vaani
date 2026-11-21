@@ -125,6 +125,17 @@
     <!-- ============ RECORDS ============ -->
     <section id="tab-records" class="tab" aria-labelledby="recTitle">
       <div id="summary" class="card summary" hidden></div>
+      <div id="registerCard" class="card register" hidden>
+        <h3 data-t="regTitle">Register page</h3>
+        <p class="muted" data-t="regHint"></p>
+        <label class="field"><span data-t="regDate">Day</span><input id="regDate" type="date"></label>
+        <div id="regView" class="reg-view"></div>
+        <div class="row-actions">
+          <button id="regCsv" class="btn" type="button" data-t="regCsv">Download CSV</button>
+          <button id="regPrint" class="btn" type="button" data-t="regPrint">Print</button>
+        </div>
+        <p class="fine" data-t="regFileNote"></p>
+      </div>
       <h2 id="recTitle" data-t="recTitle">Saved visits</h2>
       <ul id="recordList" class="records"></ul>
     </section>

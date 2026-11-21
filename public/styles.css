@@ -135,6 +135,22 @@ li.empty, p.empty { padding: 16px; border: 1px dashed var(--line); border-radius
 /* records */
 .summary h3 { margin-bottom: 8px; }
 .summary .sum-sub { margin-top: 18px; }
+.reg-view { overflow-x: auto; margin: 10px 0; -webkit-overflow-scrolling: touch; }
+.reg-view table { border-collapse: collapse; font-size: 13px; min-width: 100%; }
+.reg-view th, .reg-view td { border: 1px solid var(--line); padding: 5px 7px; text-align: left; vertical-align: top; white-space: nowrap; }
+.reg-view th { background: var(--bg); font-weight: 600; }
+.reg-view td:nth-child(14), .reg-view td:nth-child(15) { color: var(--danger); font-weight: 600; }
+
+/* Printing from "Register page": only the table goes on paper */
+@media print {
+  body { background: #fff; }
+  .top, .tabs, .offline-bar, .toast, .tab:not(#tab-records), #tab-records > :not(#registerCard),
+  #registerCard label, #registerCard .row-actions, #registerCard .muted { display: none !important; }
+  #tab-records { display: block !important; }
+  #registerCard { border: 0; padding: 0; box-shadow: none; }
+  .reg-view { overflow: visible; }
+  .reg-view th, .reg-view td { white-space: normal; color: #000 !important; }
+}
 .sum-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
 .sum-grid div { padding: 8px 10px; border-radius: 8px; background: var(--bg); }
 .sum-grid b { display: block; font-size: 20px; font-variant-numeric: tabular-nums; }

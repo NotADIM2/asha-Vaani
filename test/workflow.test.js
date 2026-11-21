@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { VisitAgent } from '../public/js/agent.js';
 import { buildRegistry } from '../public/js/nlu/registry.js';
-import { followupsFrom, dueStatus, summarize } from '../public/js/store.js';
+import { followupsFrom, dueStatus, summarize, registerRows, toCsv } from '../public/js/store.js';
 import { SCREEN, screenText, LANGS, YES_WORD, t } from '../public/js/i18n.js';
 
 const NOW = new Date(2026, 10, 19);
@@ -202,6 +202,36 @@ test('monthly counts: this month only, doses and referrals reached, still no nam
   assert.equal(m.month.reachedPHC, 1);
   assert.deepEqual(m.timing, { visits: 2, avgSeconds: 30, totalSeconds: 60 });
   assert.ok(!/Rekha|Meena|Priya|1083|1078|1051/.test(JSON.stringify(m)));
+});
+
+test('register page: one day, in saved order, one cell per column', () => {
+  const recs = [
+    { ...REFERRED, visitDate: TODAY, savedAt: '2026-11-19T11:00:00Z', bp: { sys: 150, dia: 100 }, weightKg: 60, referralOutcome: 'not_reached' },
+    { visitId: 'b', name: 'Sunita Devi', beneficiaryId: '1042', ward: 3, visitType: 'ANC', weightKg: 52, visitDate: TODAY, savedAt: '2026-11-19T09:00:00Z', vaccinesDue: ['Td-2'], nextVisit: '2026-12-03', gestWeeks: 24 },
+    { visitId: 'c', name: 'Other day', visitDate: '2026-11-18', savedAt: '2026-11-18T09:00:00Z' },
+  ];
+  const rows = registerRows(recs, TODAY, { label: (d) => d.toUpperCase() });
+  assert.equal(rows.length, 2, 'only the chosen day');
+  assert.deepEqual(rows.map((r) => r[3]), ['Sunita Devi', 'Rekha Devi'], 'in the order they were saved');
+  assert.ok(rows.every((r) => r.length === SCREEN.en.regCols.length), 'one cell per column');
+  const [sunita, rekha] = rows;
+  assert.equal(sunita[0], '1');
+  assert.equal(sunita[4], '3');
+  assert.equal(sunita[10], '24 wk');
+  assert.equal(sunita[12], 'Td-2');
+  assert.equal(sunita[14], '');
+  assert.equal(rekha[7], '150/100');
+  assert.equal(rekha[13], 'BLEEDING');
+  assert.equal(rekha[14], 'Yes, not yet reached');
+});
+
+test('CSV opens in Excel and cannot carry a formula', () => {
+  const csv = toCsv(['Name', 'Note'], [['Sunita, Devi', '=HYPERLINK("x")'], ['सुनीता', '+91 98']]);
+  assert.ok(csv.startsWith('﻿'), 'UTF-8 BOM so Indic text shows');
+  const lines = csv.slice(1).trim().split('\r\n');
+  assert.equal(lines[0], 'Name,Note');
+  assert.equal(lines[1], '"Sunita, Devi","\'=HYPERLINK(""x"")"');
+  assert.equal(lines[2], 'सुनीता,\'+91 98');
 });
 
 test('every screen string exists in every language (English fallback)', () => {
