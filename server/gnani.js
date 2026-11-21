@@ -123,6 +123,53 @@ export class TtsPool {
 
 // Evon LLM: JSON extraction only. Its output never becomes speech directly; the client
 // validates every value against the transcript and only fills empty fields.
+// The question the assistant was waiting on, in English for the model.
+const ASKED = {
+  beneficiary: 'Whose home are you at? Tell me the name or ID.',
+  visitType: 'Which visit is this: pregnancy (ANC), after delivery (PNC), newborn (HBNC), or vaccination?',
+  weightKg: 'What is the weight?',
+  vaccinesDue: 'Is any vaccine due?',
+  nextVisit: 'When is the next visit?',
+  confirm: 'I read the record back. Is everything correct? Say yes to save, or say what is wrong.',
+};
+
+// Rewrites a reply the rule-based parser could not read into a few fixed English phrases it
+// can. The model never writes the record: the app parses this line like any other utterance,
+// keeps only numbers she actually said, and reads everything back before saving.
+export async function llmInterpret({ apiKey, model, text, lang, expect }) {
+  const now = new Date();
+  const system = [
+    'You help a voice assistant used by ASHA health workers in rural India during home visits.',
+    `The assistant asked: "${ASKED[expect] || 'Tell me about this home visit.'}"`,
+    'The worker replied in any Indian language, maybe mixed with English; speech-to-text may have small errors.',
+    'Rewrite her reply as ONE short line in plain English, using only these phrases, joined by commas:',
+    'yes | no | not known | weight not taken | weight <number> kilo | next visit <DD>/<MM> | in <number> days | ANC visit | PNC visit | HBNC visit | immunisation visit',
+    '| name <name> | ID <digits> | no vaccine due | <vaccine> due | <vaccine> given | weight wrong | date wrong | name wrong | repeat | help.',
+    'Vaccines: Td, BCG, OPV, Penta, Rota, PCV, IPV, MR, JE, Vitamin A, Hepatitis B, DPT.',
+    `Today is ${now.toDateString()}. Turn relative dates ("next Tuesday", "after a fortnight") into next visit DD/MM.`,
+    'Use only numbers, names and IDs she actually said. Never guess, never add medical advice.',
+    'If the reply is unrelated chatter or you are unsure, use an empty line.',
+    'Reply ONLY with JSON: {"line": "..."}',
+  ].join(' ');
+  const res = await fetch(LLM_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-API-Key-ID': apiKey },
+    body: JSON.stringify({
+      model,
+      reasoning_effort: 'none',
+      temperature: 0,
+      max_tokens: 80,
+      response_format: { type: 'json_object' },
+      messages: [{ role: 'system', content: system }, { role: 'user', content: `[${lang}] ${text}` }],
+    }),
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!res.ok) throw Object.assign(new Error(`LLM ${res.status}`), { status: res.status });
+  const body = await res.json();
+  const line = JSON.parse(body.choices?.[0]?.message?.content || '{}').line;
+  return { line: typeof line === 'string' ? line.slice(0, 200) : '' };
+}
+
 export async function llmExtract({ apiKey, model, text, lang }) {
   const system = [
     'You extract fields from an Indian ASHA health worker\'s spoken home-visit notes. The notes may be in any Indian language mixed with English.',
@@ -145,7 +192,7 @@ export async function llmExtract({ apiKey, model, text, lang }) {
     }),
     signal: AbortSignal.timeout(8000),
   });
-  if (!res.ok) throw new Error(`LLM ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(`LLM ${res.status}`), { status: res.status });
   const body = await res.json();
   const content = body.choices?.[0]?.message?.content;
   return JSON.parse(content);

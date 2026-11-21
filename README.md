@@ -36,6 +36,11 @@ Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam, English), mixed with Engli
     shows one row per family with all their due vaccines, by ward. Register people are worked out from the national
     schedule, minus what was given at saved visits. She uses it to call
     families before the village health and nutrition day.
+13. **It asks; she answers in her own words.** The agent asks one thing at a time ("whose home are you at?", "what is the
+    weight?") and takes the answer however she says it: "पेट से है" (pregnant), "डिलीवरी हो गई" (after delivery), "दस
+    बयालीस" (ID 1042 read in pairs), "करीब पचास" (about 50), "पखवाड़े भर बाद" (in a fortnight), "वही रखो" (keep the
+    suggested date), "सेव कर दीजिए". "Not weighed today" and "don't know" are recorded as such, never as a number or as
+    "no vaccine due". When it doesn't follow, it repeats the question with an example answer instead of "say it again".
 
 No typing needed (a type box is there for when there is no internet). The app runs in the phone's browser and can be
 installed as a PWA on a low-end Android phone.
@@ -45,11 +50,14 @@ installed as a PWA on a low-end Android phone.
 > [Prototype status and limitations](#prototype-status-and-limitations).
 
 ```
-"सुनीता देवी, आईडी 1042, ए एन सी, वज़न 52 किलो, अगली विज़िट 3 दिसंबर"
+→ "…किसके घर पर हैं? नाम या आईडी बताइए।"        "सुनीता देवी के यहाँ हूँ"
+→ "वज़न कितना है?"                              "करीब बावन"
+→ "अगली विज़िट कब है? शेड्यूल के हिसाब से …"    "पखवाड़े भर बाद"
 → "पढ़कर सुनाती हूँ। सुनीता देवी, आईडी एक शून्य चार दो। ए एन सी विज़िट। वज़न बावन किलो।
-   बाकी टीके: टी डी दूसरा। अगली विज़िट तीन दिसंबर। क्या सब सही है?"
-"हाँ" → saved on this phone (encrypted; not synced anywhere) → follow-up list updated
+   बाकी टीके: टी डी दूसरा। अगली विज़िट पांच दिसंबर। क्या सब सही है?"   "हाँ, सेव कर दीजिए"
+→ saved on this phone (encrypted; not synced anywhere) → follow-up list updated
 ```
+Saying it all in one breath works too: "सुनीता देवी, आईडी 1042, वज़न 52 किलो, अगली विज़िट 3 दिसंबर".
 
 ---
 
@@ -75,7 +83,8 @@ Open http://localhost:3000 in Chrome, tap the big mic, allow microphone access, 
 
 | Say | What happens |
 |---|---|
-| *(tap mic)* | The agent says it is an AI assistant, not a human, in the selected language |
+| *(tap mic)* | The agent says it is an AI assistant, not a human, in the selected language, and asks whose home she is at |
+| "kya bolna hai?" | Explains it asks one thing at a time, then repeats the question with an example answer |
 | "Sunita ki visit, wajan 50 kilo" | Two Sunitas are in the register, so it asks which one (ward / husband / ID) |
 | "ward 3 wali" | Resolves to Sunita Devi 1042. Visit type ANC comes from the register |
 | "agli visit do hafte baad, bas" | Fills the date, then reads the whole form back |
@@ -100,7 +109,7 @@ Synthetic register (all invented): `1042` Sunita Devi (ANC), `1043` Sunita Kumar
 |---|---|---|---|
 | **Speech-to-Text, realtime streaming** | Prisma v3.0 | `wss://api.vachana.ai/stt/v3/stream` | Live transcription of the ASHA's notes. One locale per stream for whichever of the ten languages is selected (Prisma still writes the English words inside it, and follows her if she switches), `format=transcribe` so numbers come back as digits, **keyterms** (register names + health words like "TT injection", "IFA goli", "ANC"), a `topic` hint, VAD tuned for household and street noise, and `commit` for fast endpointing on short answers |
 | **Text-to-Speech, realtime streaming** | Timbre v3.0 (voice Sunaina in all ten languages) | `wss://api.vachana.ai/api/v1/tts` | Speaks every reply: greeting with AI disclosure, questions, read-back, danger alerts. Raw 24 kHz PCM is streamed and played chunk by chunk. A pool of pre-opened sockets removes handshake delay |
-| **LLM, Chat Completions (JSON output)** | Evon v3.5 | `https://api.vachana.ai/v1/chat/completions` | Optional backup extractor for sentences the rule parser couldn't understand. JSON only. It fills empty fields or adds danger flags, and can never overwrite or speak |
+| **LLM, Chat Completions (JSON output)** | Evon v3.5 | `https://api.vachana.ai/v1/chat/completions` | Optional backup for a reply the rule parser couldn't read: it rewrites the reply into a few fixed phrases ("weight 51 kilo", "PNC visit") that go through the same parser. A weight, ID or name she did not say is dropped, and everything is read back before saving. Needs a key with the LLM scope; without it the app notices the first refusal and stops asking |
 
 All three calls are made from the server (`server/gnani.js`) with the `X-API-Key-ID` header read from `.env`. The key never reaches the browser.
 
@@ -265,7 +274,8 @@ in any script.
 
 `npm test` runs the dialogue tests: full visit, voice correction, barge-in-style correction, same-name disambiguation,
 danger escalation, negation, refusal, vaccine schedule and follow-ups, plus a full dictate → read-back → "yes" → save
-flow in each language (`test/languages.test.js`), and the workflow pieces: editing in place, drafts, follow-up dates,
+flow in each language (`test/languages.test.js`), everyday answers to each question and the words that must not be read as a
+name or a danger sign (`test/natural.test.js`), and the workflow pieces: editing in place, drafts, follow-up dates,
 referral dating and the counts-only summary (`test/workflow.test.js`).
 
 ---

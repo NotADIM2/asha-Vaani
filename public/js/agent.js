@@ -21,8 +21,8 @@ export function newForm() {
     visitId: `v${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
     beneficiary: null, beneficiaryId: null, name: null, isNew: false,
     visitType: null, visitTypeInferred: false,
-    weightKg: null, bp: null, hb: null, tempC: null, respRate: null, gestWeeks: null, babyAgeDays: null,
-    vaccinesGiven: [], vaccinesDueStated: [], vaccinesDueNone: false, vaccinesDueConfirmed: false,
+    weightKg: null, weightNotTaken: false, bp: null, hb: null, tempC: null, respRate: null, gestWeeks: null, babyAgeDays: null,
+    vaccinesGiven: [], vaccinesDueStated: [], vaccinesDueNone: false, vaccinesDueConfirmed: false, vaccinesDueUnknown: false,
     nextVisit: null, ifaGiven: null,
     textDangers: [], dangers: [], dangersAbsent: [],
     transcript: [], startedAt: Date.now(), heardAt: null,
@@ -85,7 +85,8 @@ export class VisitAgent {
     this.editing = null; // { visitDate, savedAt, recordSeconds } of a saved record being corrected
     this.form = newForm();
     this.state = 'dictate'; // dictate | ask | disambiguate | confirm | referralCheck
-    this.expect = null;
+    // every visit opens with "whose home are you at?", so a bare name answers it
+    this.expect = 'beneficiary';
     this.pendingMatches = null;
     this.pendingWeight = null;
     this.pendingReferral = null;
@@ -115,7 +116,7 @@ export class VisitAgent {
     const b = rec.beneficiaryId && !rec.isNew ? this.registry.find((p) => p.id === rec.beneficiaryId) : null;
     Object.assign(f, {
       visitId: rec.visitId, beneficiary: b || null, beneficiaryId: rec.beneficiaryId ?? null, name: rec.name ?? null, isNew: Boolean(rec.isNew),
-      visitType: rec.visitType ?? null, weightKg: rec.weightKg ?? null, bp: rec.bp ?? null, hb: rec.hb ?? null, tempC: rec.tempC ?? null,
+      visitType: rec.visitType ?? null, weightKg: rec.weightKg ?? null, weightNotTaken: Boolean(rec.weightNotTaken), bp: rec.bp ?? null, hb: rec.hb ?? null, tempC: rec.tempC ?? null,
       respRate: rec.respRate ?? null, gestWeeks: rec.gestWeeks ?? null, babyAgeDays: rec.babyAgeDays ?? null, ifaGiven: rec.ifaGiven ?? null,
       vaccinesGiven: [...(rec.vaccinesGiven || [])], nextVisit: rec.nextVisit ?? null, transcript: [...(rec.transcript || [])],
       dangersAbsent: [...(rec.dangerSignsDenied || [])],
@@ -127,10 +128,12 @@ export class VisitAgent {
     this.updateDangers({ dangers: { present: [] } });
     if (this.vaccinesDue() === null) {
       f.vaccinesDueStated = [...(rec.vaccinesDue || [])];
-      if (!f.vaccinesDueStated.length) f.vaccinesDueNone = true;
+      if (rec.vaccinesDueUnknown) f.vaccinesDueUnknown = true;
+      else if (!f.vaccinesDueStated.length) f.vaccinesDueNone = true;
     }
     this.editing = { visitDate: rec.visitDate, savedAt: rec.savedAt, recordSeconds: rec.recordSeconds ?? null, dataBytes: rec.dataBytes ?? null };
     this.state = 'confirm';
+    this.expect = null;
     return f;
   }
 
@@ -141,6 +144,7 @@ export class VisitAgent {
     this.form = { ...newForm(), ...draft.form };
     this.editing = draft.editing || null;
     this.state = 'dictate';
+    this.expect = this.form.beneficiaryId || this.form.name ? null : 'beneficiary';
   }
 
   snapshot() {
@@ -159,6 +163,17 @@ export class VisitAgent {
 
   greet() {
     return this.out([this.L.greet]);
+  }
+
+  // The question the visit is waiting on, as she would hear it; with `hint`, followed by an
+  // example answer ("for example: fifty kilo").
+  question(hint = false) {
+    const L = this.L;
+    if (this.state === 'confirm') return [L.confirmQ, hint ? L.hint.confirm : null].filter(Boolean);
+    if (this.expect === 'weightCheck' || this.expect === 'yesno' || this.state === 'disambiguate') return this.lastPrompt || [L.notUnderstood];
+    const field = this.expect && L.hint[this.expect] ? this.expect : this.missing()[0];
+    if (!field) return [L.confirmQ];
+    return [this.askFor(field), hint ? L.hint[field] : null].filter(Boolean);
   }
 
   out(say, extra = {}) {
@@ -196,7 +211,7 @@ export class VisitAgent {
       const age = f.babyAgeDays ?? ageDays(b, today);
       if (age !== null) sched = vaccinesDueForChild(age, givenAll);
     }
-    if (sched === null && !f.vaccinesDueStated.length && !f.vaccinesDueNone && !f.vaccinesDueConfirmed) return null;
+    if (sched === null && !f.vaccinesDueStated.length && !f.vaccinesDueNone && !f.vaccinesDueConfirmed && !f.vaccinesDueUnknown) return null;
     const given = new Set(f.vaccinesGiven.map((v) => v.toUpperCase()));
     const out = [];
     for (const v of [...f.vaccinesDueStated, ...(f.vaccinesDueNone ? [] : sched || [])]) {
@@ -222,7 +237,7 @@ export class VisitAgent {
     const m = [];
     if (!f.beneficiaryId && !f.name) m.push('beneficiary');
     if (!f.visitType) m.push('visitType');
-    if (f.weightKg === null) m.push('weightKg');
+    if (f.weightKg === null && !f.weightNotTaken) m.push('weightKg');
     if (this.vaccinesDue() === null) m.push('vaccinesDue');
     if (!f.nextVisit) m.push('nextVisit');
     return m;
@@ -305,6 +320,8 @@ export class VisitAgent {
       if (x[k] !== undefined && x[k] !== f[k]) { f[k] = x[k]; changed.push(k); }
     }
     if (x.bp && (!f.bp || f.bp.sys !== x.bp.sys || f.bp.dia !== x.bp.dia)) { f.bp = x.bp; changed.push('bp'); }
+    if (x.weightKg !== undefined) f.weightNotTaken = false;
+    if (x.vaccines) f.vaccinesDueUnknown = false;
 
     if (x.vaccines) {
       const givenAll = [...this.givenBefore().given, ...f.vaccinesGiven];
@@ -326,7 +343,12 @@ export class VisitAgent {
     if ((this.expect === 'weightKg' || this.expect === 'weightCheck') && x.weightKg === undefined && bare.length) {
       const n = bare[bare.length - 1];
       const kg = n.unit === 'g' || n.value >= 500 ? n.value / 1000 : n.value;
-      if (kg > 0 && kg < 150) { f.weightKg = kg; changed.push('weightKg'); }
+      if (kg > 0 && kg < 150) { f.weightKg = kg; f.weightNotTaken = false; changed.push('weightKg'); }
+    }
+    // "wajan nahi liya" / "machine nahi thi": weight not measured at this visit
+    const aboutWeight = this.expect === 'weightKg' || r.mentions.includes('weightKg');
+    if (aboutWeight && x.weightKg === undefined && !bare.length && (r.intent.skip || (this.expect === 'weightKg' && (r.intent.unknown || (r.intent.no && !r.intent.yes))))) {
+      if (f.weightKg !== null || !f.weightNotTaken) { f.weightKg = null; f.weightNotTaken = true; changed.push('weightKg'); }
     }
     if (this.expect === 'beneficiary' && !x.beneficiaryId && bare.length && bare[0].digitString) {
       const b = this.registry.find((p) => p.id === bare[0].digitString);
@@ -336,7 +358,8 @@ export class VisitAgent {
       if (r.anyDate) { f.nextVisit = r.anyDate; changed.push('nextVisit'); } else if (r.intent.yes && this.suggestion()) { f.nextVisit = this.suggestion(); changed.push('nextVisit'); }
     }
     if (this.expect === 'vaccinesDue' && !x.vaccines) {
-      if (r.intent.none || (r.intent.no && !r.intent.yes)) { f.vaccinesDueNone = true; f.vaccinesDueStated = []; changed.push('vaccines'); } else if (r.intent.yes) { f.vaccinesDueConfirmed = true; changed.push('vaccines'); }
+      // "pata nahi" is not "none due": it is recorded as not known
+      if (r.intent.unknown) { f.vaccinesDueUnknown = true; f.vaccinesDueNone = false; f.vaccinesDueStated = []; changed.push('vaccines'); } else if (r.intent.none || (r.intent.no && !r.intent.yes)) { f.vaccinesDueNone = true; f.vaccinesDueUnknown = false; f.vaccinesDueStated = []; changed.push('vaccines'); } else if (r.intent.yes) { f.vaccinesDueConfirmed = true; changed.push('vaccines'); }
     }
     if (this.expect === 'visitType' && !x.visitType && f.visitType && r.intent.yes) changed.push('visitType');
 
@@ -371,7 +394,7 @@ export class VisitAgent {
       }
       case 'visitType': return f.visitType ? L.visitPart(f.visitType) : null;
       case 'weightKg': {
-        if (f.weightKg === null) return null;
+        if (f.weightKg === null) return f.weightNotTaken ? L.weightNotTaken : null;
         // the last saved weight, said alongside, so a mis-hearing or a real change stands out
         const last = this.lastVisit();
         return last?.weightKg != null ? `${L.weightPart(f.weightKg)}, ${L.lastWeight(last.weightKg, dateSpoken(last.visitDate, lang))}` : L.weightPart(f.weightKg);
@@ -383,7 +406,9 @@ export class VisitAgent {
         const parts = [];
         if (f.vaccinesGiven.length) parts.push(L.givenPart(f.vaccinesGiven.map((v) => vaccineSpoken(v, lang))));
         const due = this.vaccinesDue();
-        if (due) parts.push(L.duePart(due.map((v) => vaccineSpoken(v, lang))));
+        // "don't know" is said as such, never as "no vaccine due"
+        if (due && !due.length && f.vaccinesDueUnknown) parts.push(L.dueUnknown);
+        else if (due) parts.push(L.duePart(due.map((v) => vaccineSpoken(v, lang))));
         return parts.join(lang === 'hi' ? '। ' : '. ');
       }
       case 'nextVisit': return f.nextVisit ? L.nextPart(dateSpoken(f.nextVisit, lang)) : null;
@@ -418,10 +443,12 @@ export class VisitAgent {
       ward: f.beneficiary?.ward ?? null,
       visitType: f.visitType,
       weightKg: f.weightKg,
+      weightNotTaken: f.weightKg === null && f.weightNotTaken,
       bp: f.bp, hb: f.hb, tempC: f.tempC, respRate: f.respRate, gestWeeks: f.gestWeeks, babyAgeDays: f.babyAgeDays,
       ifaGiven: f.ifaGiven,
       vaccinesGiven: f.vaccinesGiven,
       vaccinesDue: this.vaccinesDue() || [],
+      vaccinesDueUnknown: f.vaccinesDueUnknown && !f.vaccinesDueStated.length,
       nextVisit: f.nextVisit,
       dangerSigns: f.dangers,
       dangerSignsDenied: f.dangersAbsent,
@@ -461,9 +488,19 @@ export class VisitAgent {
     const r = extract(text, { now, registry: this.registry, expect: this.expect, lang: this.lang });
     const f = this.form;
     const wasDirty = this.dirty;
-    f.transcript.push(text);
+    const heardBefore = f.heardAt;
+    // `meta.heard`: her own words, when `text` is the language model's reading of them
+    f.transcript.push(meta.heard || text);
     const say = [];
     const changed = [];
+    // Nothing usable in what she said. Ask the open question again with an example answer
+    // (never a bare "say it again"), and take the words back out of the note so the app can
+    // try the language model on them.
+    const unclear = (extra) => {
+      f.transcript.pop();
+      if (!heardBefore) f.heardAt = null;
+      return this.out([...say, ...this.question(true)], { ...extra, unclear: true });
+    };
 
     if (r.intent.cancel) {
       this.reset();
@@ -505,6 +542,13 @@ export class VisitAgent {
         say0.push(L.askReached(check.name || L.none, dateSpoken(check.referredOn, this.lang)));
       }
       return this.out(say0);
+    }
+    // A greeting, "shuru karo" or "kya bolna hai" is talk to the assistant, not a note: answer
+    // with how this works and the question it is waiting on.
+    const talk = (r.intent.greet || r.intent.start || r.intent.help) && !Object.keys(r.fields).length && !r.dangers.present.length;
+    if (talk && !(this.state === 'confirm' && r.intent.yes && !r.intent.help)) {
+      f.transcript.pop();
+      return this.out([r.intent.help || !wasDirty ? L.help : null, ...this.question(Boolean(r.intent.help))]);
     }
     if (!f.heardAt) f.heardAt = this.clock();
     if (r.intent.newVisit && Object.keys(r.fields).length === 0) {
@@ -584,8 +628,8 @@ export class VisitAgent {
         if (m === 'weightKg') { this.expect = 'weightKg'; say.push(L.askCorrectWeight); } else if (m === 'nextVisit') { this.expect = 'nextVisit'; say.push(L.askCorrectDate); } else if (m === 'beneficiaryId') { this.expect = 'beneficiary'; say.push(L.askCorrectId); } else say.push(L.whatWrong);
       } else if (fresh.length || r.intent.advice) {
         say.push(L.confirmQ);
-      } else if (!r.empty || r.tokens.length > 2) {
-        say.push(L.notUnderstood);
+      } else if (!r.empty || r.tokens.length > 1) {
+        return unclear({ alert, changed });
       }
       return this.out(say, { alert, changed });
     }
@@ -608,8 +652,7 @@ export class VisitAgent {
       // the question can wait a moment in case she keeps talking; alerts never wait
       return this.out(say, { alert, changed, deferrable: !alert && !r.intent.advice });
     }
-    if (!say.length && !r.empty && r.tokens.length > 1 && !r.dangers.absent.length) say.push(L.notUnderstood);
-    if (!say.length && this.expect && r.tokens.length > 0 && !r.dangers.absent.length) say.push(this.askFor(this.expect));
+    if (!say.length && !r.dangers.absent.length && (r.tokens.length > 1 || (this.expect && r.tokens.length > 0))) return unclear({ alert, changed });
     return this.out(say, { alert, changed });
   }
 }

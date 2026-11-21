@@ -99,7 +99,7 @@ export const DANGER_SIGNS = [
   {
     id: 'jaundice', groups: ['newborn'], source: 'HBNC, IMNCI',
     label: { hi: 'पीलिया (हथेली/तलवे पीले)', en: 'jaundice (yellow palms or soles)', kn: 'ಕಾಮಾಲೆ (ಹಳದಿ)' },
-    patterns: ['piliya|peeliya|पीलिया', 'jaundice', 'पीला|पीली|पीले|peela|peeli|peele|pila|pili|yellow', 'ಕಾಮಾಲೆ|kaamale|ಹಳದಿ|haladi'],
+    patterns: ['piliya|peeliya|पीलिया', 'jaundice', 'पीला|पीली|पीले|peela|peeli|peele|pila|pili|yellow', 'ಕಾಮಾಲೆ|ಹಳದಿ|haladi'],
   },
   {
     id: 'umbilical_infection', groups: ['newborn'], source: 'HBNC, IMNCI',

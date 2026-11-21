@@ -127,6 +127,8 @@ export function wordValue(tok) {
     const v = regionalWords.get(`${tok.script}:${tok.key}`);
     if (v !== undefined) return v;
   }
+  // English "no" shares the phonetic key of "nau" (nine): "no, the weight is wrong" is not 9
+  if (tok.script === 'latn' && tok.rom === 'no') return null;
   if (exact.has(tok.rom)) return exact.get(tok.rom);
   if (fuzzy.has(tok.key)) return fuzzy.get(tok.key);
   return null;

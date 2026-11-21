@@ -37,6 +37,19 @@ const VISIT_TYPES = [
   ['IMM', M('tikakaran', 'टीकाकरण', 'immunis~', 'immuniz~', 'vaccination', 'ವ್ಯಾಕ್ಸಿನೇಷನ್', 'ಲಸಿಕಾ~', 'टीकाकरण दिवस', ...P.IMM)],
 ];
 
+// Everyday answers to "which visit is it?" ("pet se hai", "delivery ho gayi", "bachche ka
+// teeka"). Only read as a visit type when that was the question, so the same words inside
+// a dictated note never change the visit type.
+const TYPE_ANSWERS = [
+  ['IMM', M('tika|टीका|teeka|टीके|tike|vaccine|vaccination|injection|इंजेक्शन', 'tikakaran|टीकाकरण')],
+  ['PNC', M('delivery|डिलीवरी|prasav|प्रसव|jachcha|जच्चा|jachgi|जचगी', 'bachcha|बच्चा|baby|बेबी|beta|बेटा|beti|बेटी hua|हुआ|hui|हुई', 'after delivery')],
+  ['ANC', M('pet|पेट se|से', 'pregnant|प्रेग्नेंट', 'garbh~|गर्भ~', 'ummeed|उम्मीद se|से', 'bachcha|बच्चा hone|होने')],
+  ['HBNC', M('naya|नया|chhota|छोटा|छोटे|chhote bachcha|बच्चा|बच्चे|baby|बेबी', 'newborn', 'navjat~|नवजात~', 'shishu|शिशु')],
+];
+// "the first one" etc., in the order the question lists them
+const TYPE_ORDER = ['ANC', 'PNC', 'HBNC', 'IMM'];
+const FOURTH = K('chautha', 'chauthi', 'चौथा', 'चौथी', 'fourth', '4th', 'ನಾಲ್ಕನೇ');
+
 const VACCINES = [
   ['Td', M('tt', 'टीटी', 'टी टी', 'td', 'टीडी', 'tetanus', 'टिटनेस', 'टेटनस', 'ಟಿಟಿ', 'tt injection', ...P.vaccines.Td)],
   ['BCG', M('bcg', 'बीसीजी', 'बी सी जी', 'ಬಿಸಿಜಿ', ...P.vaccines.BCG)],
@@ -68,29 +81,56 @@ const NEXT_VISIT_KW = M(
 );
 
 // ---------- intents ----------
-const YES = K('haan', 'han', 'ha', 'haa', 'hanji', 'haanji', 'ji', 'jee', 'sahi', 'theek', 'thik', 'thick', 'correct', 'right', 'yes', 'yeah', 'yep', 'ok', 'okay', 'okey', 'bilkul', 'हाँ', 'हां', 'हा', 'जी', 'सही', 'ठीक', 'बिल्कुल', 'ಹೌದು', 'howdu', 'houdu', 'sari', 'ಸರಿ', 'confirm', 'confirmed', 'save', ...W.yes);
+const YES = K('haan', 'han', 'ha', 'haa', 'hanji', 'haanji', 'ji', 'jee', 'sahi', 'theek', 'thik', 'thick', 'correct', 'right', 'yes', 'yeah', 'yep', 'ok', 'okay', 'okey', 'bilkul', 'हाँ', 'हां', 'हा', 'जी', 'सही', 'ठीक', 'बिल्कुल', 'ಹೌದು', 'howdu', 'houdu', 'sari', 'ಸರಿ', 'confirm', 'confirmed', 'save', 'सेव', 'wahi', 'vahi', 'वही', 'वोही', 'yahi', 'यही', 'बिलकुल', 'bilkul', 'chalega', 'चलेगा', 'same', ...W.yes);
 const NO = K('nahi', 'nahin', 'nhi', 'na', 'no', 'galat', 'ghalat', 'wrong', 'नहीं', 'नही', 'ना', 'गलत', 'ग़लत', 'ಇಲ್ಲ', 'illa', 'tappu', 'ತಪ್ಪು', 'incorrect', 'nope', ...W.no);
-const FILLER = K('hai', 'है', 'ji', 'jee', 'जी', 'sab', 'सब', 'bilkul', 'बिल्कुल', 'ekdum', 'एकदम', 'aur', 'और', 'ho', 'हो', 'raha', 'gaya', 'ide', 'ಇದೆ', 'it', 'is', 'all', 'that', 's', 'everything', 'वो', 'wo', 'yah', 'यह', 'ye', 'ये', 'to', 'तो', 'please', 'kar', 'karo', 'do', 'दो', 'कर', 'करो', 'हैं', ...W.filler);
+// polite verb endings and address words carry no meaning of their own ("save kar dijiye
+// please", "wahi rakh do didi")
+const FILLER = K('hai', 'है', 'ji', 'jee', 'जी', 'sab', 'सब', 'bilkul', 'बिल्कुल', 'ekdum', 'एकदम', 'aur', 'और', 'ho', 'हो', 'raha', 'gaya', 'ide', 'ಇದೆ', 'it', 'is', 'all', 'that', 's', 'everything', 'वो', 'wo', 'yah', 'यह', 'ye', 'ये', 'to', 'तो', 'please', 'kar', 'karo', 'do', 'दो', 'कर', 'करो', 'हैं',
+  'दीजिए', 'दीजिये', 'dijiye', 'dijie', 'कीजिए', 'कीजिये', 'kijiye', 'करिए', 'kariye', 'करें', 'करे', 'kare', 'प्लीज़', 'प्लीज', 'plz', 'रख', 'rakh', 'रखो', 'rakho', 'रखिए', 'rakhiye', 'दें', 'वाली', 'wali', 'वाला', 'wala', 'दीदी', 'didi', 'मैडम', 'madam', 'कुछ', 'kuch', 'लीजिए', 'लीजिये', 'lijiye', 'चलिए', 'chaliye', 'चलो', 'आगे', 'aage', 'बढ़िए', 'बढ़ो', 'badho', ...W.filler);
 const DONE = M('bas', 'बस', 'khatam', 'ख़त्म', 'खत्म', 'save karo', 'save kar', 'सेव करो', 'सेव कर', 'that is all', "that's all", 'thats all', 'done', 'finish~', 'ಮುಗಿ~', 'ಸಾಕು', 'saaku', 'itna hi', 'इतना ही', 'bas itna', 'notes complete', 'complete', ...P.done);
 const DONE_HOGAYA = M('ho gaya|हो गया|hogaya|ho gya', ...P.doneEnd);
 const REPEAT = M('phir se|फिर se|dobara|दोबारा|repeat|again', 'फिर से', 'kya bola|क्या बोला', 'ಮತ್ತೆ|matte', 'once more', 'sunao|सुनाओ', 'padh~ ke sunao', 'read back', 'readback', ...P.repeat);
-const NEW_VISIT = M('naya|नया|new visit|विज़िट|विजिट|entry|form', 'agla|अगला ghar|घर', 'next house', 'ಹೊಸ ಭೇಟಿ', ...P.newVisit);
+const NEW_VISIT = M('naya|नया|nayi|नई|new visit|विज़िट|विजिट|entry|form', 'agla|अगला ghar|घर', 'next house', 'ಹೊಸ ಭೇಟಿ', ...P.newVisit);
+// Talking to the assistant rather than giving a value: a greeting, "shuru karo", "kya bolna hai"
+const GREET = M('namaste|नमस्ते|namaskar|नमस्कार|hello|हेलो|हैलो|pranam|प्रणाम', 'ram ram|राम राम', 'ನಮಸ್ಕಾರ', 'good morning');
+const START = M('shuru|शुरू', 'start', 'chalo|चलो', 'ready', 'ಶುರು', 'ಪ್ರಾರಂಭ~');
+const HELP = M('madad|मदद', 'help', 'kya|क्या bolna|बोलना|bolu|बोलूं|बोलूँ|batana|बताना|batau|बताऊं|बताऊँ', 'what do i say', 'what should i say', 'how does this work', 'ಸಹಾಯ', 'ಏನು ಹೇಳ~');
+// "pata nahi" / "don't know"
+const UNKNOWN = M('pata|पता|maloom|मालूम|malum nahi|नहीं|nahin|na', 'not known', 'not sure', 'dont know', "don't know", 'do not know', 'ಗೊತ್ತಿಲ್ಲ', 'gottilla', 'माहीत नाही', 'தெரியாது', 'తెలియదు', 'জানি না', 'ખબર નથી', 'അറിയില്ല', 'ਪਤਾ ਨਹੀਂ');
+// the weight was not measured at this visit
+const SKIP_WEIGHT = M(
+  'nahi|नहीं|nahin liya|लिया|li|ली|kiya|किया|hua|हुआ|naapa|नापा|dekha|देखा|liye', 'machine|मशीन|kanta|कांटा|कांटा nahi|नहीं|kharab|खराब',
+  'baad|बाद mein|में', 'skip', 'not taken', 'not weighed', 'did not weigh', 'no machine', 'later',
+  'ನೋಡಿಲ್ಲ', 'ಮಾಡಿಲ್ಲ', 'घेतलं|घेतले नाही', 'பார்க்கவில்லை', 'చూడలేదు', 'নেওয়া হয়নি', 'নেওয়া|নেয়া হয়নি', 'નથી લીધું', 'નથી લીધો', 'നോക്കിയില്ല', 'ਨਹੀਂ ਲਿਆ',
+);
 const FOLLOWUPS = M('follow|फॉलो up|अप list|लिस्ट', 'aaj|आज ki|की list|लिस्ट', 'kaam|काम ki|की list|लिस्ट', 'due list', 'followup list', 'ಪಟ್ಟಿ', ...P.followups);
 const VACCINE_LIST = M(
   'tika|tike|teeka|teeke|टीका|टीके|टीकों|vaccine|vaccines|vaccination|ಲಸಿಕೆ list|लिस्ट|suchi|सूची|ಪಟ್ಟಿ',
   'tika|tike|teeka|teeke|टीका|टीके|टीकों|vaccine|ಲಸಿಕೆ ki|की|ka|का|ke|के|ದ list|लिस्ट|suchi|सूची',
   'teekakaran|tikakaran|टीकाकरण list|लिस्ट|suchi|सूची', 'immunisation|immunization list', ...P.vaccineList,
 );
-const CANCEL = M('cancel', 'रद्द', 'radd', 'chhodo|छोड़ो', 'discard', ...P.cancel);
+// "chhodo" alone may mean "skip this question"; with the visit named it discards the visit
+const CANCEL = M('cancel', 'रद्द', 'radd', 'visit|विज़िट|विजिट|sab|सब|ise|इसे chhodo|छोड़ो|chhod|छोड़', 'discard', ...P.cancel);
 const MED = K('dawa', 'dawai', 'dava', 'davai', 'दवा', 'दवाई', 'medicine', 'medicines', 'tablet', 'tablets', 'goli', 'goliyan', 'गोली', 'गोलियां', 'injection', 'इंजेक्शन', 'dose', 'dosage', 'खुराक', 'khurak', 'ilaj', 'ilaaj', 'इलाज', 'treatment', 'upchar', 'उपचार', 'ಔಷಧಿ', 'ಮಾತ್ರೆ', 'syrup', 'सिरप', 'antibiotic', 'paracetamol', 'crocin', 'ಚಿಕಿತ್ಸೆ', ...W.med);
 const QWORD = K('kya', 'क्या', 'kitni', 'कितनी', 'kitna', 'कितना', 'kaun', 'kaunsi', 'kaunsa', 'कौन', 'कौनसी', 'कौनसा', 'kaise', 'कैसे', 'what', 'which', 'how', 'should', 'shall', 'chahiye', 'चाहिए', 'ಏನು', 'ಯಾವ', 'ಎಷ್ಟು', '?', 'batao', 'बताओ', 'bataiye', 'बताइए', 'suggest', 'ಹೇಳಿ', ...W.qword);
 const PAST = K('di', 'diya', 'de', 'diye', 'dee', 'dili', 'laga', 'lagaya', 'lagi', 'given', 'gave', 'दी', 'दिया', 'दिए', 'लगा', 'लगाया', 'लगी', 'ಕೊಟ್ಟಿದೆ', 'ಕೊಟ್ಟೆ', ...W.past);
 const WHAT_TO_DO = M('kya|क्या karna|करना|karu|करूं|करूँ|karein|करें|kare|करे', 'what should i do', 'what to do', 'ಏನು ಮಾಡ~', ...P.whatToDo);
 const NAME_KW = K('naam', 'नाम', 'name', 'ಹೆಸರು', 'hesaru', ...W.name);
-const NAME_STOP = K('hai', 'है', 'ka', 'ki', 'ke', 'का', 'की', 'के', 'aur', 'और', 'and', 'id', 'umar', 'age', 'ward', 'gaon', 'is', 'nahi', 'नहीं', 'ಇದೆ', 'ಅವರ', 'वजन', 'weight', 'wajan', 'vajan', ...W.nameStop);
+const NAME_STOP = K('hai', 'है', 'ka', 'ki', 'ke', 'का', 'की', 'के', 'aur', 'और', 'and', 'id', 'umar', 'age', 'ward', 'gaon', 'is', 'nahi', 'नहीं', 'ಇದೆ', 'ಅವರ', 'वजन', 'weight', 'wajan', 'vajan', 'pata', 'पता', 'maloom', 'मालूम', 'ji', 'जी', 'ghar', 'घर', 'yahan', 'यहाँ', 'यहां', ...W.nameStop);
+// a bare answer to "whose visit?" is the name itself; these are not part of it
+const NAME_FILL = K('hai', 'है', 'ji', 'जी', 'unka', 'उनका', 'uska', 'उसका', 'iska', 'इसका', 'didi', 'दीदी', 'bhabhi', 'भाभी', 'behen', 'बहन', 'wali', 'वाली', 'ki', 'की', 'ka', 'का', 'ke', 'के', 'naam', 'नाम', 'nai', 'नई', 'nayi', 'mahila', 'महिला', 'aurat', 'औरत');
+const VISIT_WORD = K('visit', 'विज़िट', 'विजिट', 'vizit', 'ghar', 'घर', 'bhent', 'भेंट', 'ಭೇಟಿ');
+const DATE_MENTION = K('tarikh', 'tareekh', 'date', 'तारीख', 'तारीख़', 'ತಾರೀಖು', 'ದಿನಾಂಕ');
 const WARD_KW = K('ward', 'वार्ड', 'ವಾರ್ಡ್', ...W.ward);
 const VACCINE_WORD = K('teeka', 'tika', 'teeke', 'tike', 'टीका', 'टीके', 'vaccine', 'vaccines', 'ಲಸಿಕೆ', 'lasike', ...W.vaccine);
-const NONE_W = M('koi|कोई nahi|नहीं|bhi', 'kuch|कुछ nahi|नहीं', 'none', 'nothing', 'no vaccine~', 'ಯಾವುದೂ|ಏನೂ ಇಲ್ಲ|illa', 'nil', ...P.none);
+const NONE_W = M('koi|कोई nahi|नहीं|bhi', 'kuch|कुछ nahi|नहीं', 'none', 'nothing', 'no vaccine~', 'ಯಾವುದೂ|ಏನೂ ಇಲ್ಲ|illa', 'nil',
+  // "sab lag gaye" / "saare teeke ho chuke": everything due has been given
+  'sab|सब|sare|saare|सारे|sabhi|सभी lag|लग|ho|हो gaye|गए|गये|gae|chuke|चुके', 'sab|सब|sare|saare|सारे|sabhi|सभी pure|पूरे|poore|complete', 'sab|सब|sare|सारे|sabhi|सभी laga|लगा|lage|लगे|lagi|लगी hua|हुआ|hue|हुए|hui|हुई|chuke|चुके|gaye|गए', 'all given', 'all done', 'ಎಲ್ಲಾ ಹಾಕಿದೆ', ...P.none);
+
+// "kamalaa devii" -> "Kamala Devi": romanised Hindi spells a final long vowel double
+function displayName(words) {
+  return words.map((w) => w.replace(/(aa|ii|uu)$/, (v) => v[0])).map((w) => w[0].toUpperCase() + w.slice(1)).join(' ');
+}
 
 function nearestNumber(tokens, from, to, pred = () => true) {
   for (let i = Math.max(0, from); i < Math.min(tokens.length, to); i++) {
@@ -142,10 +182,13 @@ export function extract(text, ctx = {}) {
   const used = []; // token ranges consumed by a field, so bare numbers aren't reused
 
   // --- beneficiary name / ID ---
+  // tokens that are a person's name: never read as a danger sign ("Kamla" is also a word
+  // for jaundice)
+  const nameRanges = [];
   const names = findNames(tokens, registry);
   if (names.length) {
     fields.beneficiaryMatches = names.map((h) => h.b);
-    names.forEach((h) => used.push([h.start, h.end]));
+    names.forEach((h) => { used.push([h.start, h.end]); nameRanges.push([h.start, h.end]); });
   }
   for (let i = 0; i < tokens.length; i++) {
     if (!ID_KW.has(tokens[i])) continue;
@@ -155,6 +198,13 @@ export function extract(text, ctx = {}) {
       if (r && r.digitString && r.digitString.length >= 3) {
         fields.beneficiaryId = r.digitString;
         used.push([i, r.end]);
+        break;
+      }
+      // said in pairs, as people read numbers out: "das bayalis" = 10 42 = 1042
+      const r2 = r && r.digitString && r.digitString.length === 2 ? parseNumberAt(tokens, r.end) : null;
+      if (r2 && r2.digitString && r2.digitString.length <= 2) {
+        fields.beneficiaryId = r.digitString + r2.digitString.padStart(2, '0');
+        used.push([i, r2.end]);
         break;
       }
       if (r && !ID_KW.has(tokens[j])) break;
@@ -173,6 +223,17 @@ export function extract(text, ctx = {}) {
       }
     }
   }
+  if (!fields.beneficiaryId) {
+    // a register ID read out in pairs without the word "ID" ("das bayalis")
+    const nums = findNumbers(tokens);
+    for (let k = 0; k + 1 < nums.length; k++) {
+      const a = nums[k];
+      const b = nums[k + 1];
+      if (b.start !== a.end || !a.digitString || !b.digitString || inRange(a.start, used)) continue;
+      const id = a.digitString + b.digitString.padStart(2, '0');
+      if (registry.some((p) => p.id === id)) { fields.beneficiaryId = id; used.push([a.start, b.end]); break; }
+    }
+  }
   // raw name ("naam Sunaina hai") for people not in the register
   for (let i = 0; i < tokens.length; i++) {
     if (!NAME_KW.has(tokens[i])) continue;
@@ -182,8 +243,9 @@ export function extract(text, ctx = {}) {
       parts.push(tokens[j].rom);
     }
     if (parts.length) {
-      fields.rawName = parts.map((p) => p[0].toUpperCase() + p.slice(1)).join(' ');
+      fields.rawName = displayName(parts);
       used.push([i, i + 1 + parts.length]);
+      nameRanges.push([i + 1, i + 1 + parts.length]);
     }
     break;
   }
@@ -198,6 +260,16 @@ export function extract(text, ctx = {}) {
   // --- visit type ---
   for (const [type, m] of VISIT_TYPES) {
     if (m.test(tokens)) { fields.visitType = type; break; }
+  }
+  if (!fields.visitType && ctx.expect === 'visitType') {
+    for (const [type, m] of TYPE_ANSWERS) {
+      if (m.test(tokens)) { fields.visitType = type; break; }
+    }
+    if (!fields.visitType) {
+      for (const [d, ws] of [...DOSE_WORDS, [4, FOURTH]]) {
+        if (typeof d === 'number' && tokens.some((t) => ws.has(t))) { fields.visitType = TYPE_ORDER[d - 1]; break; }
+      }
+    }
   }
 
   // --- next visit date (before other numbers so "3 December" isn't read as a weight) ---
@@ -266,7 +338,9 @@ export function extract(text, ctx = {}) {
     // forward: "wajan 52 kilo", "weight hai do point aath"
     for (let j = i + 1; j <= i + 4 && j < tokens.length; j++) {
       if (inRange(j, used)) continue;
-      const r = parseNumberAt(tokens, j);
+      let r = parseNumberAt(tokens, j);
+      // "wajan bavan nahi, pachpan hai": the number after the "not" is the weight
+      if (r && tokens[r.end] && NO.has(tokens[r.end])) r = parseNumberAt(tokens, r.end + 1) || r;
       if (r) {
         const w = weightAt(tokens, r);
         if (w) { fields.weightKg = w.kg; used.push([i, w.end]); }
@@ -353,7 +427,8 @@ export function extract(text, ctx = {}) {
   }
 
   // --- danger signs ---
-  const dangers = detectDangerSigns(tokens);
+  const blankNames = (ranges) => tokens.map((t, i) => (inRange(i, ranges) ? { ...t, key: '', rom: '' } : t));
+  let dangers = detectDangerSigns(nameRanges.length ? blankNames(nameRanges) : tokens);
 
   // --- intents ---
   const content = tokens.filter((t) => !FILLER.has(t));
@@ -375,11 +450,30 @@ export function extract(text, ctx = {}) {
   if (VACCINE_LIST.test(tokens)) intent.vaccineList = true;
   if (CANCEL.test(tokens)) intent.cancel = true;
   if (NONE_W.test(tokens)) intent.none = true;
+  if (UNKNOWN.test(tokens)) intent.unknown = true;
+  if (SKIP_WEIGHT.test(tokens)) intent.skip = true;
+  if (GREET.test(tokens)) intent.greet = true;
+  if (START.test(tokens)) intent.start = true;
+  if (HELP.test(tokens)) intent.help = true;
   const hasMed = tokens.some((t) => MED.has(t));
   const hasQ = tokens.some((t) => QWORD.has(t)) || /\?/.test(text);
   const hasPast = tokens.some((t) => PAST.has(t));
   if ((hasMed && hasQ && !(hasPast && !tokens.some((t) => t.key === 'kya' || t.key === 'kitni' || t.key === 'kitna'))) || WHAT_TO_DO.test(tokens)) {
     intent.advice = true;
+  }
+
+  // A short answer to "whose visit?" that is not in the register is the name itself
+  // ("Kamla", "Kamla Devi hai"), as long as it says nothing else: no value, no sign, no
+  // command ("nayi visit"), no keyword.
+  if (ctx.expect === 'beneficiary' && !Object.keys(fields).length && !Object.keys(intent).length && !dangers.present.length && !dangers.absent.length) {
+    const parts = tokens.map((t, i) => [t, i]).filter(([t]) => !NAME_FILL.has(t));
+    const plain = parts.length && parts.length <= 3 && parts.every(([t, i]) => !t.isDigits && !parseNumberAt(tokens, i) && !NAME_STOP.has(t) && !NAME_KW.has(t)
+      && !WEIGHT_KW.has(t) && !VACCINE_WORD.has(t) && !ID_KW.has(t) && !MED.has(t) && !QWORD.has(t));
+    if (plain && !VISIT_WORD.has(tokens[tokens.length - 1])) {
+      fields.rawName = displayName(parts.map(([t]) => t.rom));
+      nameRanges.push(...parts.map(([, i]) => [i, i + 1]));
+      dangers = detectDangerSigns(blankNames(nameRanges));
+    }
   }
 
   // numbers not tied to any field - used for corrections ("nahi, 2.8")
@@ -393,7 +487,7 @@ export function extract(text, ctx = {}) {
   const mentions = [];
   if (fields.weightKg === undefined && tokens.some((t) => WEIGHT_KW.has(t))) mentions.push('weightKg');
   if (!fields.beneficiaryId && tokens.some((t) => ID_KW.has(t))) mentions.push('beneficiaryId');
-  if (!fields.nextVisit && NEXT_VISIT_KW.test(tokens)) mentions.push('nextVisit');
+  if (!fields.nextVisit && (NEXT_VISIT_KW.test(tokens) || tokens.some((t) => DATE_MENTION.has(t)))) mentions.push('nextVisit');
   if (!fields.rawName && !fields.beneficiaryMatches && tokens.some((t) => NAME_KW.has(t))) mentions.push('name');
   if (!fields.vaccines && tokens.some((t) => VACCINE_WORD.has(t))) mentions.push('vaccinesDue');
 

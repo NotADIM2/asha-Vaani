@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import WebSocket, { WebSocketServer } from 'ws';
-import { openStt, TtsPool, llmExtract, TTS_SAMPLE_RATE } from './gnani.js';
+import { openStt, TtsPool, llmExtract, llmInterpret, TTS_SAMPLE_RATE } from './gnani.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -121,22 +121,41 @@ app.use(express.static(path.join(__dirname, '..', 'public'), { extensions: ['htm
 
 app.get('/api/config', (req, res) => {
   const ok = gnaniAllowed(req.socket.remoteAddress, req.query.code);
-  res.json({ gnani: ok, llm: ok && LLM_ENABLED, sttModel: STT_MODEL, ttsModel: TTS_MODEL, ttsSampleRate: TTS_SAMPLE_RATE });
+  res.json({ gnani: ok, llm: ok && LLM_ENABLED && !llmDenied, sttModel: STT_MODEL, ttsModel: TTS_MODEL, ttsSampleRate: TTS_SAMPLE_RATE });
 });
 app.get('/healthz', (_req, res) => res.send('ok'));
 
-// Evon allows one request at a time on the free plan, so calls queue here.
+// Evon allows one request at a time on the free plan, so calls queue here. A key without
+// the LLM scope gets 403 on every call: after the first, the model is reported off so the
+// app stops waiting on it.
+let llmDenied = false;
+const llmFailed = (res, e) => { if (e?.status === 403 || e?.status === 401) llmDenied = true; res.status(e?.status === 403 ? 403 : 502).json({ error: 'llm failed' }); };
 let llmChain = Promise.resolve();
 let llmQueued = 0;
 app.post('/api/extract', (req, res) => {
-  if (!LLM_ENABLED || !gnaniAllowed(req.socket.remoteAddress, req.get('x-access-code'))) return res.status(403).json({ error: 'llm disabled' });
+  if (!LLM_ENABLED || llmDenied || !gnaniAllowed(req.socket.remoteAddress, req.get('x-access-code'))) return res.status(403).json({ error: 'llm disabled' });
   if (!extractLimit(req.ip) || llmQueued >= 5 || !spend('llm', 1)) return res.status(429).json({ error: 'busy' });
   const text = String(req.body?.text || '').slice(0, 1500);
   const lang = okLang(req.body?.lang) ? req.body.lang : 'hi';
   if (!text.trim()) return res.status(400).json({ error: 'empty' });
   llmQueued++;
   llmChain = llmChain.then(async () => {
-    try { res.json(await llmExtract({ apiKey: KEY, model: LLM_MODEL, text, lang })); } catch { res.status(502).json({ error: 'llm failed' }); } finally { llmQueued--; }
+    try { res.json(await llmExtract({ apiKey: KEY, model: LLM_MODEL, text, lang })); } catch (e) { llmFailed(res, e); } finally { llmQueued--; }
+  });
+});
+
+// A reply the rule-based parser could not read: the model rewrites it into phrases it can.
+const EXPECTS = ['beneficiary', 'visitType', 'weightKg', 'vaccinesDue', 'nextVisit', 'confirm'];
+app.post('/api/interpret', (req, res) => {
+  if (!LLM_ENABLED || llmDenied || !gnaniAllowed(req.socket.remoteAddress, req.get('x-access-code'))) return res.status(403).json({ error: 'llm disabled' });
+  if (!extractLimit(req.ip) || llmQueued >= 5 || !spend('llm', 1)) return res.status(429).json({ error: 'busy' });
+  const text = String(req.body?.text || '').slice(0, 600);
+  const lang = okLang(req.body?.lang) ? req.body.lang : 'hi';
+  const expect = EXPECTS.includes(req.body?.expect) ? req.body.expect : null;
+  if (!text.trim()) return res.status(400).json({ error: 'empty' });
+  llmQueued++;
+  llmChain = llmChain.then(async () => {
+    try { res.json(await llmInterpret({ apiKey: KEY, model: LLM_MODEL, text, lang, expect })); } catch (e) { llmFailed(res, e); } finally { llmQueued--; }
   });
 });
 

@@ -44,7 +44,11 @@ const MONTH = set('mahine', 'mahina', 'month', 'months', 'महीने', 'म
 const AFTER = set('baad', 'bad', 'mein', 'me', 'after', 'later', 'बाद', 'में', 'ನಂತರ', 'nantara', 'baadu', ...W.after, 'মধ্যে', 'ഉള്ളിൽ', 'ਵਿੱਚ');
 const NEXT = set('agle', 'agla', 'agli', 'next', 'अगले', 'अगला', 'अगली', 'ಮುಂದಿನ', 'mundina', 'पुढची', 'पुढील', 'पुढचा', 'पुढच्या', 'அடுத்த', 'తదుపరి', 'తర్వాతి', 'వచ్చే', 'পরের', 'পরবর্তী', 'আগামী', 'આગામી', 'આવતા', 'આવતી', 'આવતું', 'આવતે', 'അടുത്ത', 'വരുന്ന', 'ਅਗਲੀ', 'ਅਗਲਾ', 'ਅਗਲੇ');
 const DATE_WORD = set('tarikh', 'tareekh', 'date', 'तारीख', 'तारीख़', 'ತಾರೀಖು', 'ತಾರೀಕು', 'ko', 'को', 'तारखेला', 'तारखेस', 'தேதி', 'ஆம்', 'తేదీ', 'తారీఖు', 'తారీఖున', 'তারিখ', 'তারিখে', 'তারিখের', 'તારીખ', 'તારીખે', 'തീയതി', 'ਤਾਰੀਖ', 'ਤਾਰੀਖ਼', 'ਤਰੀਕ');
-const IN = set('in');
+const IN = set('in', 'after');
+const BHAR = set('bhar', 'भर');
+// a fortnight: "pakhwade baad"
+const FORTNIGHT = set('pakhwada', 'pakhwade', 'पखवाड़ा', 'पखवाड़े', 'पखवारा', 'पखवारे', 'fortnight');
+const LATER = set('baad', 'बाद', 'after', 'later', 'ನಂತರ');
 // unit forms that already carry "in / after": 10 நாட்களில், 10 రోజుల్లో, 10 दिवसांनी, 10 દિવસમાં
 const IN_DAY = set('दिवसांनी', 'दिवसांत', 'நாளில்', 'நாட்களில்', 'రోజుల్లో', 'రోజులలో', 'দিনে', 'দিনের', 'દિવસમાં', 'ദിവസത്തിനുള്ളിൽ', 'ദിവസത്തിനകം', 'ਦਿਨਾਂ');
 const IN_WEEK = set('आठवड्यांनी', 'आठवड्यांत', 'आठवड्यात', 'வாரத்தில்', 'வாரங்களில்', 'వారాల్లో', 'వారంలో', 'সপ্তাহে', 'અઠવાડિયામાં', 'ആഴ്ചയ്ക്കുള്ളിൽ', 'ആഴ്ചയ്ക്കകം', 'ਹਫ਼ਤਿਆਂ');
@@ -111,6 +115,16 @@ export function findDate(tokens, now = new Date(), from = 0, to = tokens.length)
         }
         return { date: addMonths(today, 1), start: i, end: i + 2 };
       }
+    }
+    if (FORTNIGHT.has(t)) {
+      let end = i + 1;
+      while (end < tokens.length && end < i + 3 && (BHAR.has(tokens[end]) || LATER.has(tokens[end]))) end++;
+      return { date: addDays(today, 14), start: i, end };
+    }
+    // "hafte baad", "mahine bhar baad": one week / one month, no number said
+    if ((WEEK.has(t) || MONTH.has(t)) && !(i > 0 && parseNumberAt(tokens, i - 1)) && tokens[i + 1] && (BHAR.has(tokens[i + 1]) || LATER.has(tokens[i + 1]))) {
+      const end = BHAR.has(tokens[i + 1]) && tokens[i + 2] && LATER.has(tokens[i + 2]) ? i + 3 : i + 2;
+      return { date: WEEK.has(t) ? addDays(today, 7) : addMonths(today, 1), start: i, end };
     }
     // "in 10 days"
     const numStart = IN.has(t) ? i + 1 : i;

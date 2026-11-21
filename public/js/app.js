@@ -8,6 +8,7 @@ import { saveRecord, updateRecord, listRecords, deleteAll, followupsFrom, summar
 import { dangerLabel } from './nlu/danger.js';
 import { iso } from './nlu/dates.js';
 import { tokenize } from './nlu/translit.js';
+import { checkLine } from './nlu/interpret.js';
 import { VISIT_LABEL, LANGS, UI, YES_WORD, screenText } from './i18n.js';
 import { stripEcho, isBargeIn } from './echo.js';
 
@@ -163,7 +164,7 @@ function fieldRows(v) {
   const vaccines = () => {
     const parts = (v.vaccinesGiven || []).map((x) => `<span class="chip">✔ ${e(x)} ${e(s.given)}</span>`);
     if (v.vaccinesDue === null) return parts.join('');
-    if (!v.vaccinesDue.length) parts.push(`<span class="chip denied">${e(s.noneDue)}</span>`);
+    if (!v.vaccinesDue.length) parts.push(`<span class="chip denied">${e(v.vaccinesDueUnknown ? s.dueUnknown : s.noneDue)}</span>`);
     for (const x of v.vaccinesDue) parts.push(`<span class="chip due">${e(x)} ${e(s.due)}</span>`);
     return parts.join('');
   };
@@ -178,7 +179,7 @@ function fieldRows(v) {
     ['beneficiary', s.fBeneficiary, e(who)],
     ['lastVisit', s.fLast, e(last), true],
     ['visitType', s.fVisitType, v.visitType ? e(VISIT_LABEL[v.visitType] + (v.visitTypeInferred ? ` (${s.fromRegister})` : '')) : ''],
-    ['weightKg', s.fWeight, v.weightKg != null ? `${e(v.weightKg)} kg` : ''],
+    ['weightKg', s.fWeight, v.weightKg != null ? `${e(v.weightKg)} kg` : v.weightNotTaken ? e(s.notWeighed) : ''],
     ['vitals', s.fVitals, e(vitals), true],
     ['vaccines', s.fVaccines, vaccines()],
     ['nextVisit', s.fNext, v.nextVisit ? e(fmtDate(v.nextVisit)) : ''],
@@ -700,6 +701,33 @@ async function llmAssist(text) {
   } catch { /* LLM is optional */ }
 }
 
+// A reply the rules could not read ("unclear"): ask the language model what she meant, as
+// fixed phrases the parser knows, and run those through the agent in place of her words.
+// Falls back to the agent's own re-ask (the question with an example answer).
+let turnSeq = 0;
+async function interpretUnclear(text, res0) {
+  if (!config.llm) return { res: res0, used: false };
+  const seq = turnSeq;
+  setStatus('thinking');
+  try {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 5000);
+    const expect = agent.state === 'confirm' ? 'confirm' : agent.expect;
+    const r = await fetch('/api/interpret', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Access-Code': accessCode }, body: JSON.stringify({ text, lang, expect }), signal: ctl.signal });
+    clearTimeout(timer);
+    // this key has no language-model access: stop asking for the rest of the session
+    if (r.status === 403) config.llm = false;
+    // she said something else meanwhile: that newer turn wins
+    if (!r.ok || seq !== turnSeq) return { res: res0, used: true };
+    const line = checkLine((await r.json()).line, text);
+    if (!line) return { res: res0, used: true };
+    const res1 = agent.handle(line, { heard: text });
+    return { res: res1.unclear ? res0 : res1, used: true };
+  } catch {
+    return { res: res0, used: true };
+  }
+}
+
 // Prisma tags the language from the script, so Marathi comes back as hi-IN (both Devanagari).
 // Marathi function words settle it.
 const MARATHI = /(^|\s)(आहे|आहेत|आणि|किंवा|नाही|उद्या|पुढची|पुढील|झाले|झालं)(?=\s|[.,।?]|$)|ळ/;
@@ -725,6 +753,7 @@ async function onTranscript(text, meta = {}) {
 
   // kept so a failed save can put the visit back exactly as it was
   const before = JSON.parse(JSON.stringify(agent.snapshot()));
+  const seq = ++turnSeq;
   const res0 = agent.handle(text);
   // nothing usable (room chatter): leave the agent talking and the screen as it was
   if (!res0.say.length && !res0.changed?.length && !res0.saved) { player?.duck(false); return; }
@@ -733,7 +762,9 @@ async function onTranscript(text, meta = {}) {
   $('youSaid').textContent = text;
   $('youSaid').classList.remove('muted');
 
-  const res = res0;
+  const { res, used: usedLlm } = res0.unclear ? await interpretUnclear(text, res0) : { res: res0, used: false };
+  if (seq !== turnSeq) return; // a newer turn arrived while the model was thinking
+  if (usedLlm && !running) setStatus('idle');
   let reply = res.say.join(' ');
   if (res.referralOutcome) noteReferral(res.referralOutcome);
   if (res.saved) {
@@ -772,7 +803,7 @@ async function onTranscript(text, meta = {}) {
   } else {
     speak(reply, { speechEndAt, ack: true });
   }
-  if (!res.changed?.length && !res.saved && text.split(/\s+/).length >= 3 && agent.state !== 'confirm') llmAssist(text);
+  if (!usedLlm && !res.changed?.length && !res.saved && text.split(/\s+/).length >= 3 && agent.state !== 'confirm') llmAssist(text);
 }
 
 // ---------------- connection ----------------

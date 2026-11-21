@@ -56,9 +56,11 @@ function lev(a, b) {
   return dp[a.length][b.length];
 }
 
+// A mis-heard name keeps its first sound; an everyday word one letter away does not
+// ("देखा" dekha is not "रेखा" Rekha).
 function close(a, b) {
   if (a === b) return true;
-  if (Math.min(a.length, b.length) < 4) return false;
+  if (Math.min(a.length, b.length) < 4 || a[0] !== b[0]) return false;
   return lev(a, b) <= (Math.max(a.length, b.length) >= 7 ? 2 : 1);
 }
 
@@ -72,6 +74,9 @@ export function findNames(tokens, reg) {
         let end = i + 1;
         let full = parts.length === 1;
         if (parts.length > 1 && tokens[i + 1] && close(tokens[i + 1].key, parts[1])) { end = i + 2; full = true; }
+        // a first name alone must be exact: "मिला" (met) is not Meena, "रखा" (kept) is not Rekha;
+        // a near miss counts only with the surname after it
+        if (tokens[i].key !== parts[0] && end !== i + 2) continue;
         hits.push({ b, start: i, end, full });
       }
     }

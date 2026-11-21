@@ -197,7 +197,7 @@ export function registerRows(records, dayIso, { label = (d) => d, words = { yes:
     r.name || '',
     r.ward ?? '',
     r.visitType || '',
-    r.weightKg ?? '',
+    r.weightKg ?? (r.weightNotTaken ? 'not weighed' : ''),
     r.bp ? `${r.bp.sys}/${r.bp.dia}` : '',
     r.hb ?? '',
     r.tempC ?? '',
