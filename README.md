@@ -2,7 +2,7 @@
 
 **Track:** Healthcare – Voice field register for ASHA workers · **BolBharat, the Gnani Voice AI Innovation Challenge**
 
-**▶ Live app:** _deployed link here_ · **🎬 Demo video (2½ min):** _video link here_
+**▶ Live app:** https://asha-vaani-afm8.onrender.com · **🎬 Demo video (2½ min):** _video link here_
 
 An ASHA worker walks out of a house and *speaks* her visit notes in any of the ten languages Gnani supports (Hindi, Marathi, Bengali,
 Gujarati, Punjabi, Tamil, Telugu, Kannada, Malayalam, English), mixed with English however she naturally talks. Before she reaches the next house she has:
