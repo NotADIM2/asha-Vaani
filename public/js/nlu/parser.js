@@ -113,6 +113,10 @@ const VACCINE_LIST = M(
 const CANCEL = M('cancel', 'रद्द', 'radd', 'visit|विज़िट|विजिट|sab|सब|ise|इसे chhodo|छोड़ो|chhod|छोड़', 'discard', ...P.cancel);
 const MED = K('dawa', 'dawai', 'dava', 'davai', 'दवा', 'दवाई', 'medicine', 'medicines', 'tablet', 'tablets', 'goli', 'goliyan', 'गोली', 'गोलियां', 'injection', 'इंजेक्शन', 'dose', 'dosage', 'खुराक', 'khurak', 'ilaj', 'ilaaj', 'इलाज', 'treatment', 'upchar', 'उपचार', 'ಔಷಧಿ', 'ಮಾತ್ರೆ', 'syrup', 'सिरप', 'antibiotic', 'paracetamol', 'crocin', 'ಚಿಕಿತ್ಸೆ', ...W.med);
 const QWORD = K('kya', 'क्या', 'kitni', 'कितनी', 'kitna', 'कितना', 'kaun', 'kaunsi', 'kaunsa', 'कौन', 'कौनसी', 'कौनसा', 'kaise', 'कैसे', 'what', 'which', 'how', 'should', 'shall', 'chahiye', 'चाहिए', 'ಏನು', 'ಯಾವ', 'ಎಷ್ಟು', '?', 'batao', 'बताओ', 'bataiye', 'बताइए', 'suggest', 'ಹೇಳಿ', ...W.qword);
+const DO = K('do', 'दो');
+const DO_AFTER = K('kar', 'कर', 'de', 'दे', 'rakh', 'रख', 'bata', 'बता', 'likh', 'लिख', 'chhod', 'छोड़', 'bhej', 'भेज', 'daal', 'dal', 'डाल', 'hata', 'हटा', 'badal', 'बदल', 'suna', 'सुना', 'save', 'सेव', 'note', 'नोट', 'jod', 'जोड़');
+// a sign said to be there: "hai", "aa raha", "ho gaya", "has"
+const STATED = K('hai', 'है', 'hain', 'हैं', 'raha', 'rahi', 'rahe', 'रहा', 'रही', 'रहे', 'gaya', 'gayi', 'गया', 'गई', 'hua', 'hui', 'हुआ', 'हुई', 'has', 'have', 'ide', 'ಇದೆ', 'आहे', 'இருக்கு', 'இருக்கிறது', 'உள்ளது', 'ఉంది', 'ఉన్నాయి', 'আছে', 'হচ্ছে', 'છે', 'ഉണ്ട്', 'ਹੈ', 'ਹਨ');
 const PAST = K('di', 'diya', 'de', 'diye', 'dee', 'dili', 'laga', 'lagaya', 'lagi', 'given', 'gave', 'दी', 'दिया', 'दिए', 'लगा', 'लगाया', 'लगी', 'ಕೊಟ್ಟಿದೆ', 'ಕೊಟ್ಟೆ', ...W.past);
 const WHAT_TO_DO = M('kya|क्या karna|करना|karu|करूं|करूँ|karein|करें|kare|करे', 'what should i do', 'what to do', 'ಏನು ಮಾಡ~', ...P.whatToDo);
 const NAME_KW = K('naam', 'नाम', 'name', 'ಹೆಸರು', 'hesaru', ...W.name);
@@ -460,6 +464,9 @@ export function extract(text, ctx = {}) {
   const hasPast = tokens.some((t) => PAST.has(t));
   if ((hasMed && hasQ && !(hasPast && !tokens.some((t) => t.key === 'kya' || t.key === 'kitni' || t.key === 'kitna'))) || WHAT_TO_DO.test(tokens)) {
     intent.advice = true;
+    // "bukhar ke liye kya dawai dein?" asks about a sign, it does not report one: with a
+    // medicine question a sign counts only when said to be there ("bukhar hai, kya dein?")
+    if (!tokens.some((t) => STATED.has(t))) dangers = { present: [], absent: dangers.absent };
   }
 
   // A short answer to "whose visit?" that is not in the register is the name itself
@@ -477,7 +484,9 @@ export function extract(text, ctx = {}) {
   }
 
   // numbers not tied to any field - used for corrections ("nahi, 2.8")
-  const bare = findNumbers(tokens).filter((n) => !inRange(n.start, used)).map((n) => {
+  // "save kar do", "rakh do", "bata do": that "do" is "please do", not the number two
+  const imperativeDo = (n) => n.end - n.start === 1 && DO.has(tokens[n.start]) && n.start > 0 && DO_AFTER.has(tokens[n.start - 1]);
+  const bare = findNumbers(tokens).filter((n) => !inRange(n.start, used) && !imperativeDo(n)).map((n) => {
     const unit = tokens[n.end];
     return { value: n.value, digitString: n.digitString, unit: unit && KG.has(unit) ? 'kg' : unit && GRAM.has(unit) ? 'g' : null };
   });

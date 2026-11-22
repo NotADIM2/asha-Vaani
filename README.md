@@ -83,7 +83,7 @@ Open http://localhost:3000 in Chrome, tap the big mic, allow microphone access, 
 
 | Say | What happens |
 |---|---|
-| *(tap mic)* | The agent says it is an AI assistant, not a human, in the selected language, and asks whose home she is at |
+| *(tap mic)* | The agent says it is an AI assistant, in the selected language, and asks whose home she is at |
 | "kya bolna hai?" | Explains it asks one thing at a time, then repeats the question with an example answer |
 | "Sunita ki visit, wajan 50 kilo" | Two Sunitas are in the register, so it asks which one (ward / husband / ID) |
 | "ward 3 wali" | Resolves to Sunita Devi 1042. Visit type ANC comes from the register |
@@ -200,7 +200,7 @@ Same flow in plain text:
 
 | Baseline rule | Implementation |
 |---|---|
-| **AI disclosure** in the first turn, in her language | Every greeting starts "मैं … एक ए आई सहायक हूँ, इंसान नहीं" / "I am … an A I assistant, not a human", and the same in each of the ten languages. Covered by a test. |
+| **AI disclosure** in the first turn, in her language | Every greeting starts "मैं आशा वाणी हूँ, एक ए आई सहायक" / "I am Asha Vaani, an A I assistant", and the same in each of the ten languages. Covered by a test. |
 | **Synthetic or consented data only** | The register is invented (`public/js/nlu/registry.js`). Settings → About says to use demo people only and that it is not an official health record. |
 | **DPDP: encrypted at rest, deleted after judging** | Records are encrypted on the phone with AES-256-GCM (non-extractable WebCrypto key) and deleted automatically after 1 / 7 / 30 days, plus a "Delete all" button. The server stores and logs **no** audio or transcripts. |
 | **Health: no diagnosis, treatment or dosage** | Every spoken sentence comes from fixed templates (`public/js/i18n.js`); nothing is generated freely. Medicine and treatment questions get a fixed refusal. Danger signs follow a fixed, cited list (see [DANGER_SIGNS.md](DANGER_SIGNS.md), also listed in Settings in her language) and the only action is "refer to PHC". The LLM can only return JSON fields, which are checked against the transcript and can only fill empty fields or add flags. |

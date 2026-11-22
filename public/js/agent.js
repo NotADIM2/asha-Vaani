@@ -177,9 +177,19 @@ export class VisitAgent {
   }
 
   out(say, extra = {}) {
-    const text = say.filter(Boolean);
+    // the visit saved when she moved on to the next house goes out with this turn's reply
+    const moved = this.movedOn;
+    this.movedOn = null;
+    const text = [moved?.say, ...say].filter(Boolean);
     if (text.length) this.lastPrompt = text;
-    return { say: text, state: this.state, expect: this.expect, form: this.form, due: this.vaccinesDue(), missing: this.missing(), ...extra };
+    return { say: text, state: this.state, expect: this.expect, form: this.form, due: this.vaccinesDue(), missing: this.missing(), ...(moved ? { saved: moved.rec } : {}), ...extra };
+  }
+
+  // Anything recorded beyond who she is and the visit type.
+  hasData() {
+    const f = this.form;
+    return f.weightKg !== null || f.weightNotTaken || Boolean(f.bp) || f.hb !== null || f.tempC !== null || f.respRate !== null
+      || f.gestWeeks !== null || f.babyAgeDays !== null || Boolean(f.nextVisit) || f.vaccinesGiven.length > 0 || f.vaccinesDueStated.length > 0 || f.dangers.length > 0;
   }
 
   group() {
@@ -486,6 +496,17 @@ export class VisitAgent {
     const L = this.L;
     const now = this.now();
     const r = extract(text, { now, registry: this.registry, expect: this.expect, lang: this.lang });
+    // Another registered person's ID, not said as a correction ("nahi, 1043"), while this
+    // visit already holds data: she has moved on to the next house. Save this visit as it
+    // stands, so its danger signs and referral stay with this person, and start a clean one.
+    this.movedOn = null;
+    const other = r.fields.beneficiaryId && this.registry.find((p) => p.id === r.fields.beneficiaryId);
+    const cur = this.form.beneficiary;
+    if (other && cur && other.id !== cur.id && !r.intent.no && !this.editing && this.state !== 'disambiguate' && this.hasData()) {
+      const rec = this.record();
+      this.reset();
+      this.movedOn = { rec, say: L.savedEarlier(cur, rec.referToPHC) };
+    }
     const f = this.form;
     const wasDirty = this.dirty;
     const heardBefore = f.heardAt;

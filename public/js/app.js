@@ -843,6 +843,7 @@ async function onTranscript(text, meta = {}) {
 
   const { res, used: usedLlm } = res0.unclear ? await interpretUnclear(text, res0) : { res: res0, used: false };
   if (seq !== turnSeq) return; // a newer turn arrived while the model was thinking
+  if (res0.saved && !res.saved) res.saved = res0.saved; // the visit closed when she moved on
   if (usedLlm && !running) setStatus('idle');
   let reply = res.say.join(' ');
   if (res.referralOutcome) noteReferral(res.referralOutcome);
@@ -1099,8 +1100,9 @@ function setLang(l, announce = true) {
   document.documentElement.lang = l;
   if (ws?.readyState === 1) send(JSON.stringify({ type: 'lang', lang: l, keyterms: [...registryKeyterms(registry), ...HEALTH_TERMS] }));
   if (recog) { recog.lang = LANGS[l].browser; try { recog.stop(); } catch { /* restarts onend */ } }
-  if (running && announce) speak(agent.L.greet);
+  // before the greeting, which shows "speaking" until it ends
   setStatus(running ? 'listening' : 'idle');
+  if (running && announce) speak(agent.L.greet);
   applyScreenText();
   fillMicSelect();
   showMicName();

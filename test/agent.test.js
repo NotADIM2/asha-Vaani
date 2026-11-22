@@ -200,3 +200,51 @@ test('an unknown ID with no one set yet is still a new beneficiary', () => {
   assert.equal(a.form.beneficiaryId, '2001');
   assert.equal(a.form.isNew, true);
 });
+
+test('the greeting says AI assistant without "not a human"', () => {
+  assert.doesNotMatch(mk('hi').greet().say[0], /इंसान/);
+  assert.doesNotMatch(mk('en').greet().say[0], /human/);
+});
+
+test('a medicine question refuses without recording the sign it asks about', () => {
+  const a = mk();
+  a.handle('रेखा देवी 1083 सातवाँ महीना है खून आ रहा है');
+  const r = a.handle('बुखार के लिए क्या दवाई दें?');
+  assert.match(r.say.join(' '), /सलाह नहीं दे सकती/);
+  assert.deepEqual(a.form.dangers, ['bleeding'], 'fever is asked about, not reported');
+  const b = mk();
+  b.handle('रेखा देवी 1083');
+  b.handle('बुखार है, क्या दवाई दें?');
+  assert.ok(b.form.dangers.includes('fever'), 'a sign said to be there still counts');
+});
+
+test('"save kar do" is not a weight of two kilos', () => {
+  const a = mk();
+  a.handle('रेखा देवी 1083 सातवाँ महीना है खून आ रहा है');
+  assert.equal(a.expect, 'weightKg');
+  const r = a.handle('अभी सेव कर दो');
+  assert.equal(a.form.weightKg, null);
+  assert.doesNotMatch(r.say.join(' '), /दो किलो/);
+});
+
+test('another person by ID mid-visit saves this visit with its signs and starts a clean one', () => {
+  const a = mk();
+  a.handle('रेखा देवी 1083 सातवाँ महीना है खून आ रहा है');
+  const r = a.handle('गौरम्मा आईडी 1095 वज़न 52 किलो');
+  assert.equal(r.saved.beneficiaryId, '1083');
+  assert.deepEqual(r.saved.dangerSigns, ['bleeding']);
+  assert.equal(r.saved.referToPHC, true);
+  assert.match(r.say[0], /रेखा देवी की विज़िट सेव कर दी/);
+  assert.equal(a.form.beneficiaryId, '1095');
+  assert.deepEqual(a.form.dangers, [], 'her signs do not follow to the next person');
+  assert.equal(a.form.weightKg, 52);
+});
+
+test('"nahi, <ID>" is still a correction of the same visit', () => {
+  const a = mk();
+  a.handle('सुनीता देवी आईडी 1042 वज़न 52 किलो');
+  const r = a.handle('नहीं, आईडी 1043');
+  assert.ok(!r.saved);
+  assert.equal(a.form.beneficiaryId, '1043');
+  assert.equal(a.form.weightKg, 52);
+});
