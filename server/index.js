@@ -73,6 +73,9 @@ setInterval(() => {
 }, 5000).unref();
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
+// Render's proxy reaches the app from 127.0.0.1, so there loopback is every visitor, not this
+// computer. Render sets RENDER=true in every service.
+const TRUST_LOOPBACK = !process.env.RENDER;
 function codeOk(code) {
   const a = Buffer.from(String(code || ''));
   const b = Buffer.from(ACCESS_CODE);
@@ -81,7 +84,7 @@ function codeOk(code) {
 // socketAddr is the TCP peer, which a client cannot fake (unlike X-Forwarded-For).
 function gnaniAllowed(socketAddr, code) {
   if (!KEY || !budgetLeft()) return false;
-  return LOOPBACK.has(socketAddr) || (Boolean(ACCESS_CODE) && codeOk(code));
+  return (TRUST_LOOPBACK && LOOPBACK.has(socketAddr)) || (Boolean(ACCESS_CODE) && codeOk(code));
 }
 const TTS_LANG = STT_LANG;
 
