@@ -76,7 +76,7 @@ Open http://localhost:3000 in Chrome, tap the big mic, allow microphone access, 
 
 - **No key yet?** It still runs. The header shows `browser speech`, and the app falls back to the browser's speech
   recognition and voice. Gnani is used automatically once `GNANI_API_KEY` is set.
-- **No mic?** Settings → *Type a note* sends text straight to the same agent.
+- **No mic?** Visit tab → *Type instead* sends text straight to the same agent.
 - **On a phone:** the mic needs HTTPS, so use the deployed link (below) or a tunnel such as `npx localtunnel --port 3000`.
 
 ### Demo script (what we say to the judges)
@@ -90,7 +90,7 @@ Open http://localhost:3000 in Chrome, tap the big mic, allow microphone access, 
 | "agli visit do hafte baad, bas" | Fills the date, then reads the whole form back |
 | "nahi, weight 52 kilo" *(while it is still talking)* | Barge-in: it stops at once, fixes the weight and reads back only what changed |
 | "haan" | Saved and encrypted. The follow-up list updates |
-| "Rekha Devi 1083, khoon aa raha hai" | Spoken danger alert straight away, red banner, 108 / PHC buttons |
+| "Rekha Devi 1083, khoon aa raha hai" | Spoken danger alert straight away, a red alert card with the signs, *Call PHC* / *108* buttons |
 | "bukhar ke liye kya dawai dein?" | Fixed refusal: no medicine advice, ask the ANM / PHC doctor |
 | "aaj ki list" | Speaks the follow-ups, referrals first. For a referral from an earlier day it asks "did she reach the PHC?" |
 | "nahi" | Noted as not yet reached: she stays at the top of the referral list and is asked about again tomorrow |
@@ -180,8 +180,13 @@ Same flow in plain text:
 
 ### Fit for the target user
 
-- Visit-first start screen: *Pregnancy visit*, *Newborn visit* or *Other visit*, then hands-free. Plain light theme, large
-  text and 44 px+ touch targets; red is used only for danger alerts.
+- Visit-first start screen: *Pregnancy visit*, *Newborn visit* or *Other visit*, then hands-free. Light theme with one
+  teal accent, amber for overdue and red only for danger; 44 px+ touch targets. The Visit screen puts the mic, what was
+  heard and the AI's reply in one panel next to the visit record, with a *Pregnancy / Newborn / Other* switch.
+- Phone first, with a bottom tab bar. On a laptop or projector the tabs move into the header and Start, Visit and
+  Follow-ups use two columns.
+- Fonts (Alata, Instrument Sans, Red Hat Mono; Khand and Mukta for Devanagari) and icons (Material Symbols) are
+  self-hosted, so the screens look the same offline and under the server's strict Content-Security-Policy.
 - Runs in Chrome on any Android phone and installs as a PWA. **Offline:** the app opens, and a typed note is parsed
   and saved on the phone exactly like a spoken one. Voice needs internet. The header shows Online/Offline as the browser
   reports it.
@@ -198,7 +203,7 @@ Same flow in plain text:
 | **AI disclosure** in the first turn, in her language | Every greeting starts "मैं … एक ए आई सहायक हूँ, इंसान नहीं" / "I am … an A I assistant, not a human", and the same in each of the ten languages. Covered by a test. |
 | **Synthetic or consented data only** | The register is invented (`public/js/nlu/registry.js`). The start screen carries a "Prototype, demo data only" notice saying not to use real patients. |
 | **DPDP: encrypted at rest, deleted after judging** | Records are encrypted on the phone with AES-256-GCM (non-extractable WebCrypto key) and deleted automatically after 1 / 7 / 30 days, plus a "Delete all" button. The server stores and logs **no** audio or transcripts. |
-| **Health: no diagnosis, treatment or dosage** | Every spoken sentence comes from fixed templates (`public/js/i18n.js`); nothing is generated freely. Medicine and treatment questions get a fixed refusal. Danger signs follow a fixed, cited list (see [DANGER_SIGNS.md](DANGER_SIGNS.md)) and the only action is "refer to PHC". The LLM can only return JSON fields, which are checked against the transcript and can only fill empty fields or add flags. |
+| **Health: no diagnosis, treatment or dosage** | Every spoken sentence comes from fixed templates (`public/js/i18n.js`); nothing is generated freely. Medicine and treatment questions get a fixed refusal. Danger signs follow a fixed, cited list (see [DANGER_SIGNS.md](DANGER_SIGNS.md), also listed in Settings in her language) and the only action is "refer to PHC". The LLM can only return JSON fields, which are checked against the transcript and can only fill empty fields or add flags. |
 | **Secrets** | The API key is read from `.env` (git-ignored) on the server and never reaches the browser. |
 | **Voices** | Stock Gnani Timbre v3.0 voice (Sunaina) only. No cloning. |
 
@@ -208,7 +213,7 @@ Same flow in plain text:
 
 | Step | What happens | Code |
 |---|---|---|
-| Start | *Pregnancy visit* (ANC) or *Newborn visit* (HBNC) fixes the visit type; *Other* lets her say it | `agent.startVisit` |
+| Start | *Pregnancy visit* (ANC) or *Newborn visit* (HBNC) fixes the visit type; *Other* lets her say it. The switch on the Visit screen does the same before anything is said; mid-visit it answers the visit type as typing "ANC" or "HBNC" would | `agent.startVisit` |
 | Fill | Voice or the type box; the card lists what is still needed before saving | `agent.missing` |
 | Save | Only after the read-back and her "yes". The app says "saved" only after IndexedDB has committed the write; if the write fails the visit stays on screen, she hears that it was not saved, and "yes" retries | `store.saveRecord`, `app.js:onTranscript` |
 | Unfinished | The visit in progress is kept as an encrypted draft and offered again after a reload | `store.saveDraft`, `agent.restore` |
@@ -294,10 +299,13 @@ Any Node host with WebSockets works the same way (Railway, Fly.io, a VM): `npm c
 ```
 server/index.js        HTTP + one WebSocket per phone, relays to Gnani, no storage
 server/gnani.js        Prisma STT stream, Timbre TTS socket pool, Evon JSON extractor
-public/js/app.js       mic → STT → agent → TTS loop, barge-in, endpointing, latency meter, UI
+public/index.html      the five screens (Start, Visit, Follow-ups, Records, Settings) and the inline icon sprite
+public/styles.css      the whole visual design: colour tokens, components, phone and wide-screen layouts, print
+public/assets/fonts/   self-hosted fonts with their OFL licences
+public/js/app.js       mic → STT → agent → TTS loop, barge-in, endpointing, latency meter, screen rendering
 public/js/audio.js     mic capture, energy VAD, streaming PCM player
 public/js/agent.js     dialogue state machine: dictate → ask → read back → confirm/correct → save
-public/js/i18n.js      every sentence the agent can say, in all ten languages
+public/js/i18n.js      every sentence the agent can say, in all ten languages, and the screen text
 public/js/store.js     AES-GCM encrypted IndexedDB records and draft, follow-up list, due status, summary
 public/js/nlu/         translit (all Indic scripts), numbers, dates, fields, danger signs, schedules, register;
                        regional.js holds the Marathi/Tamil/Telugu/Bengali/Gujarati/Malayalam/Punjabi vocabulary
