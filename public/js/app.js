@@ -5,7 +5,7 @@ import { buildRegistry, registryKeyterms } from './nlu/registry.js';
 import { vaccinationList } from './nlu/schedule.js';
 import { Mic, Vad, Player, listMics, judgeLevel } from './audio.js';
 import { saveRecord, updateRecord, listRecords, deleteAll, followupsFrom, summarize, saveDraft, loadDraft, clearDraft, registerRows, toCsv } from './store.js';
-import { dangerLabel } from './nlu/danger.js';
+import { dangerLabel, DANGER_SIGNS, NUMERIC_RULES } from './nlu/danger.js';
 import { iso } from './nlu/dates.js';
 import { tokenize } from './nlu/translit.js';
 import { checkLine } from './nlu/interpret.js';
@@ -105,12 +105,32 @@ function phoneOnly(s) {
   return String(s).replace(/[^\d+]/g, '').slice(0, 15);
 }
 
+// An icon from the sprite in index.html.
+const icon = (name, cls = '') => `<svg class="ic${cls ? ` ${cls}` : ''}" aria-hidden="true"><use href="#i-${name}"/></svg>`;
+
+function setPhc(n) {
+  $('callPhc').href = `tel:${n}`;
+  $('phcShown').textContent = n ? `(${n})` : '';
+}
+
+// Settings: the fixed danger-sign list itself, by the visit it applies to, then the readings.
+function renderDangerList() {
+  const s = S();
+  const e = escapeHtml;
+  const groups = Object.entries(s.dsGroup).map(([g, title]) => [title, DANGER_SIGNS.filter((d) => d.groups.includes(g)).map((d) => d.id)]);
+  groups.push([s.dsReadings, NUMERIC_RULES.map((r) => r.id)]);
+  $('dangerList').innerHTML = groups.filter(([, ids]) => ids.length).map(([title, ids]) => `<div class="ds-group"><h4>${e(title)}</h4>
+    <ul>${[...new Set(ids)].map((id) => `<li>${e(dangerLabel(id, lang))}</li>`).join('')}</ul></div>`).join('');
+}
+
 // Static screen text: every element with data-t gets its string in the current language.
+const ABOUT_ICONS = ['smart_toy', 'lock', 'cloud_off', 'mic', 'record_voice_over'];
 function applyScreenText() {
   const s = S();
   document.querySelectorAll('[data-t]').forEach((el) => { const v = s[el.dataset.t]; if (typeof v === 'string') el.textContent = v; });
   document.querySelectorAll('[data-t-ph]').forEach((el) => { el.placeholder = s[el.dataset.tPh] || ''; });
-  $('aboutList').innerHTML = s.about.map((x) => `<li>${escapeHtml(x)}</li>`).join('');
+  $('aboutList').innerHTML = s.about.map((x, i) => `<li>${icon(ABOUT_ICONS[i] || 'info')}<span>${escapeHtml(x)}</span></li>`).join('');
+  renderDangerList();
   setNet();
 }
 
@@ -123,6 +143,7 @@ function setStatus(kind) {
   $('status').classList.toggle('bad', kind === 'error');
   $('status').textContent = kind === 'listening' ? u.listening : kind === 'speaking' ? u.speaking : kind === 'thinking' ? '…'
     : kind === 'connecting' ? S().connecting : kind === 'error' ? S().startFailed : talkMode === 'ptt' ? u.hold : u.tapToTalk;
+  $('talkModeLbl').textContent = talkMode === 'ptt' ? u.hold : S().hfShort;
 }
 
 // Connection state is shown as it is: the browser's own online flag. Nothing is synced either way.
@@ -187,9 +208,32 @@ function fieldRows(v) {
   ];
 }
 
+// Field tiles; the person is shown in the card header instead, and lists of chips take a full row.
+const WIDE = new Set(['lastVisit', 'vitals', 'vaccines', 'dangers']);
 function dl(rows, flashOf = () => false) {
-  return rows.filter(([, , val, optional]) => !(optional && !val))
-    .map(([key, label, val]) => `<dt>${escapeHtml(label)}</dt><dd class="${val ? '' : 'empty'}${val && flashOf(key, val) ? ' flash' : ''}">${val || escapeHtml(S().waiting)}</dd>`).join('');
+  return rows.filter(([key, , val, optional]) => key !== 'beneficiary' && !(optional && !val))
+    .map(([key, label, val]) => `<div class="f f-${key}${WIDE.has(key) ? ' wide' : ''}"><dt>${escapeHtml(label)}</dt><dd class="${val ? '' : 'empty'}${val && flashOf(key, val) ? ' flash' : ''}">${val || escapeHtml(S().waiting)}</dd></div>`).join('');
+}
+
+// Card header: who the visit is for.
+function whoHtml(v) {
+  const s = S();
+  const e = escapeHtml;
+  const idLine = [v.beneficiaryId && `ID ${v.beneficiaryId}`, v.ward != null && `ward ${v.ward}`, v.isNew && s.newPerson].filter(Boolean).join(' · ');
+  return `<span class="who-lbl">${e(s.fBeneficiary)}</span>${v.name || v.beneficiaryId
+    ? `<b>${e(v.name || '—')}</b>${idLine ? `<span class="mono">${e(idLine)}</span>` : ''}`
+    : `<b class="empty">${e(s.waiting)}</b>`}`;
+}
+
+// Visit-type switch on the Visit screen: shows the current kind, and picks one.
+function renderSegs() {
+  const vt = agent.form.visitType;
+  const cur = !vt ? null : vt === 'ANC' || vt === 'HBNC' ? vt : '';
+  document.querySelectorAll('[data-vt]').forEach((b) => {
+    b.setAttribute('aria-pressed', String(cur !== null && b.dataset.vt === cur));
+    // mid-visit, "Other" has no one meaning (PNC or immunisation): she says which
+    b.disabled = agent.dirty && b.dataset.vt === '' && cur !== '';
+  });
 }
 
 const NEED_KEY = { beneficiary: 'needBeneficiary', visitType: 'needVisitType', weightKg: 'needWeight', vaccinesDue: 'needVaccines', nextVisit: 'needNext' };
@@ -205,7 +249,13 @@ function renderForm(changed = []) {
     lastRendered[key] = val;
     return hit;
   };
-  $('form').innerHTML = dl(fieldRows(view), flashOf);
+  const rows = fieldRows(view);
+  const who = rows[0][2];
+  $('recordWho').innerHTML = whoHtml({ ...f, ward: view.ward });
+  $('recordWho').classList.toggle('flash', Boolean(who) && flashOf('beneficiary', who));
+  $('form').innerHTML = dl(rows, flashOf);
+  renderSegs();
+  $('dangerCheck').hidden = !agent.dirty || f.dangers.length > 0;
   $('stateLbl').textContent = { ask: '· asking', disambiguate: '· which person?', confirm: '· confirm?' }[agent.state] || '';
   const missing = agent.missing();
   $('needs').hidden = !agent.dirty || !missing.length;
@@ -216,7 +266,7 @@ function renderForm(changed = []) {
   alert.hidden = !f.dangers.length;
   if (f.dangers.length) {
     $('alertTitle').textContent = (UI[lang] || UI.en).refer;
-    $('alertSigns').textContent = f.dangers.map((d) => dangerLabel(d, lang)).join(' · ');
+    $('alertSigns').innerHTML = f.dangers.map((d) => `<span>${escapeHtml(dangerLabel(d, lang))}</span>`).join('');
   }
 }
 
@@ -262,24 +312,35 @@ async function refreshLists() {
 function followItem(x, { compact = false } = {}) {
   const s = S();
   const e = escapeHtml;
+  const idLine = [x.beneficiaryId && `ID ${x.beneficiaryId}`, VISIT_LABEL[x.visitType]].filter(Boolean).join(' · ');
   const sub = [
-    VISIT_LABEL[x.visitType] || '',
-    x.refer ? s.referredOn(fmtDate(x.referredOn)) : '',
-    x.refer && x.dangerSigns.length ? x.dangerSigns.map((d) => dangerLabel(d, lang)).join(', ') : '',
-    x.referralOutcome === 'reached' ? s.reachedOn(fmtDate(x.referralCheckedOn)) : '',
-    x.refer && x.referralOutcome === 'not_reached' ? s.notReachedOn(fmtDate(x.referralCheckedOn)) : '',
-    !compact && x.vaccinesDue.length ? `${s.due}: ${x.vaccinesDue.join(', ')}` : '',
+    x.refer ? e(s.referredOn(fmtDate(x.referredOn))) : '',
+    x.refer && x.dangerSigns.length ? `<b>${e(x.dangerSigns.map((d) => dangerLabel(d, lang)).join(', '))}</b>` : '',
+    x.referralOutcome === 'reached' ? e(s.reachedOn(fmtDate(x.referralCheckedOn))) : '',
+    x.refer && x.referralOutcome === 'not_reached' ? e(s.notReachedOn(fmtDate(x.referralCheckedOn))) : '',
+    !compact && x.vaccinesDue.length ? e(`${s.due}: ${x.vaccinesDue.join(', ')}`) : '',
   ].filter(Boolean).join(' · ');
   const when = x.due ? `${relDay(x.due)}${x.status === 'soon' || x.status === 'later' ? '' : ` · ${fmtDate(x.due)}`}` : '';
+  // overdue and due today stand out in amber; an open referral's date is red; later is plain
+  const whenHtml = !x.due ? ''
+    : x.refer ? `<p class="when-refer">${e(s.nextOn(when))}</p>`
+      : `<span class="pill ${x.status === 'overdue' || x.status === 'today' ? 'warn' : 'soft'}">${icon('schedule')}${e(s.nextOn(when))}</span>`;
   // an open referral asks whether she reached the PHC, until the answer is yes
-  const reach = x.refer ? `<div class="reach"><p class="q">${e(s.checkQ)}</p>
-      <button class="btn small" data-reach="${e(x.visitId)}" data-outcome="reached">${e(s.reachedBtn)}</button>
-      <button class="btn small" data-reach="${e(x.visitId)}" data-outcome="not_reached">${e(s.notYetBtn)}</button></div>` : '';
-  return `<li class="item${x.refer ? ' refer' : ''}">
-    <span class="who"><b>${e(x.name || '—')}${x.beneficiaryId ? ` · ID ${e(x.beneficiaryId)}` : ''}</b><span>${e(sub)}</span>
-      <span class="when ${x.refer ? 'refer' : x.status}">${e(x.due ? s.nextOn(when) : '')}</span>${reach}</span>
-    <button class="btn small" data-follow="${e(x.visitId)}">${e(s.startThis)}</button>
-  </li>`;
+  const reach = x.refer ? `<div class="reach"><p class="q">${e(s.checkQ)}</p><div class="reach-btns">
+      <button class="btn danger" data-reach="${e(x.visitId)}" data-outcome="reached">${e(s.reachedBtn)}</button>
+      <button class="btn" data-reach="${e(x.visitId)}" data-outcome="not_reached">${e(s.notYetBtn)}</button></div></div>` : '';
+  return `<article class="fu${x.refer ? ' refer' : ''}">
+    <div class="fu-head">
+      <div class="fu-who">
+        ${x.refer ? `<span class="pill err">${icon('emergency')}${e(s.grpRefer)}</span>` : ''}
+        <h4>${e(x.name || '—')}</h4>
+        ${idLine ? `<p class="fu-id mono">${e(idLine)}</p>` : ''}
+      </div>
+      <button class="btn small ${x.refer ? 'primary' : 'soft'}" data-follow="${e(x.visitId)}">${e(s.startThis)}</button>
+    </div>
+    ${sub ? `<p class="fu-sub">${sub}</p>` : ''}
+    ${whenHtml}${reach}
+  </article>`;
 }
 
 function renderFollowups() {
@@ -295,7 +356,8 @@ function renderFollowups() {
   $('followGroups').innerHTML = listError
     ? `<p class="error">${escapeHtml(s.readFailed(listError))}</p>`
     : groups.length
-      ? groups.map(([k, xs]) => `<h3 class="group">${escapeHtml(s[k])} (${xs.length})</h3><ul class="items">${xs.map((x) => followItem(x)).join('')}</ul>`).join('')
+      ? `<div class="groups">${groups.map(([k, xs]) => `<section><h3 class="group${k === 'grpRefer' ? ' refer' : ''}">${k === 'grpRefer' ? icon('emergency') : ''}<span>${escapeHtml(s[k])} (${xs.length})</span></h3>
+        <div class="fu-list">${xs.map((x) => followItem(x)).join('')}</div></section>`).join('')}</div>`
       : `<p class="empty">${escapeHtml(s.fuEmpty)}</p>`;
   renderVaccines();
   const attention = fu.filter((x) => x.refer || x.status === 'overdue' || x.status === 'today');
@@ -321,11 +383,14 @@ function renderVaccines() {
   }
   const rows = [...people.values()].sort((a, b) => (a.ward ?? 99) - (b.ward ?? 99) || (a.name || '').localeCompare(b.name || ''));
   $('vaccineGroups').innerHTML = rows.length
-    ? `<ul class="items">${rows.map((p) => `<li class="item">
-        <span class="who"><b>${e(p.name || '—')}${p.id ? ` · ID ${e(p.id)}` : ''}</b><span>${p.ward != null ? e(`ward ${p.ward}`) : ''}</span>
-          <span class="chips">${p.codes.map((c) => `<span class="chip due">${e(c)}</span>`).join('')}</span></span>
-        ${p.id && registry.some((b) => b.id === p.id) ? `<button class="btn small" data-person="${e(p.id)}">${e(s.startThis)}</button>` : ''}
-      </li>`).join('')}</ul>`
+    ? `<ul class="vac-list">${rows.map((p) => {
+      const idLine = [p.id && `ID ${p.id}`, p.ward != null && `Ward ${p.ward}`].filter(Boolean).join(' · ');
+      return `<li class="vac-row">
+        <div><h4>${e(p.name || '—')}</h4>${idLine ? `<p class="fu-id mono">${e(idLine)}</p>` : ''}
+          <div class="chips">${p.codes.map((c) => `<span class="vchip">${e(c)}</span>`).join('')}</div></div>
+        ${p.id && registry.some((b) => b.id === p.id) ? `<button class="btn small soft" data-person="${e(p.id)}">${e(s.startThis)}</button>` : ''}
+      </li>`;
+    }).join('')}</ul>`
     : `<p class="empty">${e(s.vacEmpty)}</p>`;
 }
 
@@ -336,13 +401,14 @@ function recordHtml(r) {
   const heard = (r.transcript || []).slice(-3).map((t) => `<p class="heard">“${e(typeof t === 'string' ? t : t?.text || '')}”</p>`).join('');
   const store = [r.recordSeconds ? `${s.recordedIn(s.dur(r.recordSeconds))}.` : '', r.dataBytes ? s.dataOf(fmtBytes(r.dataBytes)) : '', s.stored, r.updatedAt ? s.edited(fmtTime(r.updatedAt)) : '', r.expiresAt ? s.deletesOn(fmtDate(iso(new Date(r.expiresAt)))) : ''].filter(Boolean).join(' ');
   return `<details>
-    <summary><span><b>${e(r.name || '—')}${r.beneficiaryId ? ` · ID ${e(r.beneficiaryId)}` : ''}</b>
-      <span>${e(VISIT_LABEL[r.visitType] || '')} · ${e(fmtDate(r.visitDate))}${r.referToPHC ? ` · <span class="referred">${e(s.referred)}</span>` : ''}</span></span></summary>
+    <summary><span class="rec-sum"><b>${e(r.name || '—')}${r.beneficiaryId ? ` · ID ${e(r.beneficiaryId)}` : ''}</b>
+      <span class="rec-meta"><span>${e([VISIT_LABEL[r.visitType], fmtDate(r.visitDate)].filter(Boolean).join(' · '))}</span>${r.referToPHC ? `<span class="ref-badge">${e(s.grpRefer)}</span>` : ''}</span></span>
+      ${icon('keyboard_arrow_down', 'chev')}</summary>
     <div class="rec-body">
       <dl class="fields">${dl(rows)}</dl>
-      ${heard ? `<p class="muted"><b>${e(s.heard)}</b></p>${heard}` : ''}
+      ${heard ? `<div><p class="heard-lbl">${e(s.heard)}</p>${heard}</div>` : ''}
       <p class="store-line">${e(store)}</p>
-      <button class="btn" data-edit="${e(r.visitId)}">${e(s.editBtn)}</button>
+      <button class="btn soft small" data-edit="${e(r.visitId)}">${icon('edit_note')}<span>${e(s.editBtn)}</span></button>
     </div>
   </details>`;
 }
@@ -355,29 +421,39 @@ function renderRecords() {
     $('recordList').innerHTML = `<li class="error">${e(s.readFailed(listError))}</li>`;
     return;
   }
-  $('recordList').innerHTML = records.length ? records.map((r) => `<li>${recordHtml(r)}</li>`).join('') : `<li class="empty">${e(s.recEmpty)}</li>`;
+  $('recordList').innerHTML = records.length ? records.map((r) => `<li${r.referToPHC ? ' class="ref"' : ''}>${recordHtml(r)}</li>`).join('') : `<li class="empty">${e(s.recEmpty)}</li>`;
   // the summary only appears once there is something to count
   $('summary').hidden = !records.length;
   if (records.length) {
     const m = summarize(records, iso(new Date()));
-    const cell = (n, label) => `<div><b>${e(n)}</b><span>${e(label)}</span></div>`;
+    const cell = (n, label, cls = '') => `<div><span class="n${cls}">${e(n)}</span><span class="l">${e(label)}</span></div>`;
+    const byType = (bt) => Object.entries(bt).filter(([, n]) => n);
     const mo = m.month;
     const [y, mm] = mo.key.split('-').map(Number);
     const monthName = new Date(y, mm - 1, 1).toLocaleDateString(locale(), { month: 'long', year: 'numeric' });
-    $('summary').innerHTML = `<h3>${e(s.sumTitle)}</h3><div class="sum-grid">
-      ${cell(m.visits, s.sumVisits)}
-      ${Object.entries(m.byType).filter(([, n]) => n).map(([k, n]) => cell(n, VISIT_LABEL[k])).join('')}
-      ${cell(m.referrals, s.sumRefer)}${cell(m.overdue, s.sumOverdue)}${cell(m.dueSoon, s.sumSoon)}${m.newPeople ? cell(m.newPeople, s.sumNew) : ''}
-    </div><p class="fine">${e(s.sumNote)}</p>
-    <h3 class="sum-sub">${e(s.monthTitle(monthName))}</h3><div class="sum-grid">
-      ${cell(mo.visits, s.sumVisits)}
-      ${Object.entries(mo.byType).filter(([, n]) => n).map(([k, n]) => cell(n, VISIT_LABEL[k])).join('')}
-      ${cell(mo.dosesGiven, s.mDoses)}${cell(mo.referrals, s.sumRefer)}${cell(mo.reachedPHC, s.mReached)}
-    </div><p class="fine">${e(s.monthNote)}</p>
-    ${m.timing.visits ? `<h3 class="sum-sub">${e(s.timeTitle)}</h3><div class="sum-grid">
+    const types = byType(m.byType).map(([k, n]) => `${n} ${k}`).join(' · ');
+    $('summary').innerHTML = `<div class="sum-block">
+      <h2 class="h-page">${e(s.sumTitle)}</h2><p class="lede">${e(s.sumNote)}</p>
+      <div class="tiles">
+        <div class="stat"><span class="n">${e(m.visits)}</span><span class="l">${e(s.sumVisits)}</span>${types ? `<span class="s">${e(types)}</span>` : ''}</div>
+        <div class="stat${m.referrals ? ' err' : ''}"><span class="top-row"><span class="n">${e(m.referrals)}</span>${m.referrals ? icon('emergency') : ''}</span><span class="l">${e(s.sumRefer)}</span></div>
+        <div class="stat${m.overdue ? ' warn' : ''}"><span class="n">${e(m.overdue)}</span><span class="l">${e(s.sumOverdue)}</span></div>
+        <div class="stat"><span class="n">${e(m.dueSoon)}</span><span class="l">${e(s.sumSoon)}</span></div>
+        ${m.newPeople ? `<div class="stat"><span class="n">${e(m.newPeople)}</span><span class="l">${e(s.sumNew)}</span></div>` : ''}
+      </div>
+    </div>
+    <div class="sum-block">
+      <h2 class="h-section">${e(s.monthTitle(monthName))}</h2><p class="lede">${e(s.monthNote)}</p>
+      <div class="month">
+        ${cell(mo.visits, s.sumVisits)}
+        ${byType(mo.byType).map(([k, n]) => cell(n, VISIT_LABEL[k])).join('')}
+        ${cell(mo.dosesGiven, s.mDoses)}${cell(mo.referrals, s.sumRefer, mo.referrals ? ' err' : '')}${cell(mo.reachedPHC, s.mReached)}
+      </div>
+    </div>
+    ${m.timing.visits ? `<div class="sum-block"><h2 class="h-section">${e(s.timeTitle)}</h2><div class="month">
       ${cell(s.dur(m.timing.avgSeconds), s.avgTime)}${cell(s.dur(m.timing.totalSeconds), s.totalTime)}${cell(m.timing.visits, s.timedVisits)}
       ${m.data.visits ? cell(fmtBytes(m.data.avgBytes), s.dataAvg) : ''}
-    </div>` : ''}`;
+    </div></div>` : ''}`;
   }
   renderData();
 }
@@ -392,11 +468,11 @@ function fmtBytes(n) {
 function renderData() {
   const s = S();
   const e = escapeHtml;
-  const both = (x) => `${fmtBytes(x.up + x.down)}<small>↑ ${fmtBytes(x.up)} · ↓ ${fmtBytes(x.down)}</small>`;
+  const both = (x) => `<b>${fmtBytes(x.up + x.down)}</b><small>↑ ${fmtBytes(x.up)} · ↓ ${fmtBytes(x.down)}</small>`;
   const avg = records.length ? summarize(records, iso(new Date())).data.avgBytes : null;
-  $('dataUse').innerHTML = `<div><b>${both(dataUse.session)}</b><span>${e(s.dataSession)}</span></div>
-    <div><b>${both(dataUse.visit)}</b><span>${e(s.dataVisit)}</span></div>
-    <div><b>${e(fmtBytes(avg))}</b><span>${e(s.dataAvg)}</span></div>`;
+  $('dataUse').innerHTML = `<div>${both(dataUse.session)}<span>${e(s.dataSession)}</span></div>
+    <div>${both(dataUse.visit)}<span>${e(s.dataVisit)}</span></div>
+    <div><b>${e(fmtBytes(avg))}</b><small>&nbsp;</small><span>${e(s.dataAvg)}</span></div>`;
 }
 
 // ---------- register page: one day's visits as a table, CSV or print ----------
@@ -435,7 +511,10 @@ function downloadRegister() {
 }
 
 function showTab(name) {
-  document.querySelectorAll('.tabs button').forEach((x) => x.classList.toggle('active', x.dataset.tab === name));
+  document.querySelectorAll('.tabs button').forEach((x) => {
+    x.classList.toggle('active', x.dataset.tab === name);
+    x.setAttribute('aria-selected', String(x.dataset.tab === name));
+  });
   document.querySelectorAll('.tab').forEach((x) => x.classList.toggle('active', x.id === `tab-${name}`));
   window.scrollTo({ top: 0 });
   if (name === 'settings') renderData();
@@ -1043,7 +1122,7 @@ async function init() {
   $('micSelect').addEventListener('change', (e) => { pref.set('micId', e.target.value); $('micTestResult').textContent = ''; restartMic(); });
   $('micTest').addEventListener('click', testMic);
   navigator.mediaDevices?.addEventListener?.('devicechange', () => { fillMicSelect(); restartMic(); });
-  $('callPhc').href = `tel:${phoneOnly(pref.get('phc', ''))}`;
+  setPhc(phoneOnly(pref.get('phc', '')));
   $('retention').value = pref.get('retentionDays', '7');
   applyScreenText();
   renderForm();
@@ -1070,7 +1149,7 @@ async function init() {
 
   $('lang').addEventListener('change', (e) => setLang(e.target.value));
   $('talkMode').addEventListener('change', (e) => { talkMode = e.target.value; pref.set('talkMode', talkMode); setStatus(running ? 'listening' : 'idle'); });
-  $('phcNumber').addEventListener('change', (e) => { const n = phoneOnly(e.target.value); e.target.value = n; pref.set('phc', n); $('callPhc').href = `tel:${n}`; });
+  $('phcNumber').addEventListener('change', (e) => { const n = phoneOnly(e.target.value); e.target.value = n; pref.set('phc', n); setPhc(n); });
   $('retention').addEventListener('change', (e) => pref.set('retentionDays', e.target.value));
   $('regDate').addEventListener('change', (e) => { if (e.target.value) { regDay = e.target.value; renderRegister(); } });
   $('regCsv').addEventListener('click', downloadRegister);
@@ -1096,6 +1175,13 @@ async function init() {
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
   document.querySelectorAll('[data-goto]').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.goto)));
   document.querySelectorAll('[data-start]').forEach((b) => b.addEventListener('click', () => beginVisit(b.dataset.start)));
+  // Visit-type switch: before anything is said it starts that kind of visit; mid-visit it
+  // answers the visit type exactly as typing "ANC" or "HBNC" would.
+  document.querySelectorAll('[data-vt]').forEach((b) => b.addEventListener('click', () => {
+    const vt = b.dataset.vt;
+    if (!agent.dirty) beginVisit(vt);
+    else if (vt && vt !== agent.form.visitType) onTranscript(vt, { speechEndAt: performance.now() });
+  }));
   // follow-up "Start visit" and saved-record "Correct" buttons are rendered into lists
   document.addEventListener('click', (e) => {
     const reach = e.target.closest('[data-reach]');
