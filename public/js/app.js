@@ -71,6 +71,8 @@ let commitTimer = null;
 let sttFails = 0;
 let sttWorked = false; // Prisma returned at least one transcript this session
 let sttFallback = false;
+let ttsFails = 0;
+let ttsDown = false; // the Gnani voice failed twice this session; replies use the browser's voice
 // Data use: bytes of audio and messages on the voice connection (network overhead not
 // counted), for this session and since the last save, so the cost of a visit is a number.
 const dataUse = { session: { up: 0, down: 0 }, visit: { up: 0, down: 0 } };
@@ -81,6 +83,7 @@ function countData(dir, data) {
   dataUse.visit[dir] += n;
 }
 function send(data) {
+  if (ws?.readyState !== 1) return; // closed after switching to the browser voice
   ws.send(data);
   countData('up', data);
 }
@@ -710,7 +713,7 @@ function heard(text, meta = {}) {
   onTranscript(use, meta);
 }
 
-function speak(text, { speechEndAt = null, ack = false } = {}) {
+function speak(text, { speechEndAt = null, ack = false, browser = false } = {}) {
   if (!text) return;
   $('agentSaid').textContent = text;
   $('agentSaid').classList.remove('muted');
@@ -719,7 +722,7 @@ function speak(text, { speechEndAt = null, ack = false } = {}) {
   if (recentSaid.length > 3) recentSaid.shift();
   stopSpeaking();
   setStatus('speaking');
-  if (config.gnani && player && ws?.readyState === 1) {
+  if (config.gnani && !ttsDown && !browser && player && ws?.readyState === 1) {
     const id = sayId++;
     player.begin(id, (at) => recordTtfa(at, speechEndAt));
     const cached = ttsCache.get(`${lang}|${text}`);
@@ -875,7 +878,7 @@ async function onTranscript(text, meta = {}) {
   persistDraft();
   if (res.deferrable && talkMode === 'handsfree') {
     // acknowledge now, then give her a moment to keep dictating before the next question
-    if (config.gnani && ttsCache.has(`${lang}|${agent.L.ack}`)) speak(agent.L.ack, { speechEndAt });
+    if (config.gnani && !ttsDown && ttsCache.has(`${lang}|${agent.L.ack}`)) speak(agent.L.ack, { speechEndAt });
     // she may still be talking; in a loud room the VAD can stay on, so ask after 1.35 s at most
     let tries = 0;
     const ask = () => { if (vad?.speaking && ++tries < 3) deferTimer = setTimeout(ask, 450); else speak(reply); };
@@ -936,13 +939,22 @@ function connect() {
           break;
         }
         case 'stt_error': {
+          // Gnani refused or dropped the connection (credits, key, outage): no raw error on
+          // screen, carry on with the browser's recognition. One drop after it has worked is
+          // retried, since the server reconnects on the next audio frame.
+          if (!/unclear|transcription/i.test(m.message || '')) {
+            console.warn('Gnani STT:', m.message);
+            if (!sttWorked) goFree(S().gnaniDown);
+            else if (!sttFallback && ++sttFails >= 2) useBrowserListening();
+            break;
+          }
           // never worked yet: switch at once; worked before: allow one bad segment
-          if (/unclear|transcription/i.test(m.message || '') && ++sttFails >= (sttWorked ? 2 : 1) && !sttFallback) { useBrowserListening(); break; }
+          if (++sttFails >= (sttWorked ? 2 : 1) && !sttFallback) { useBrowserListening(); break; }
           // Prisma says this when a segment can't be made out; say what to do, at most every 15 s
           const now = Date.now();
           if (now - (onTranscript.lastSttErr || 0) < 15000) break;
           onTranscript.lastSttErr = now;
-          toast(/unclear|transcription error/i.test(m.message || '') ? S().sttUnclear : `Speech service: ${m.message}`, 6000);
+          toast(S().sttUnclear, 6000);
           break;
         }
         case 'tts_end': {
@@ -953,14 +965,19 @@ function connect() {
         }
         case 'tts_error':
           caching.delete(m.id);
-          if (m.message === 'rate limited') { goFree(); speak(speakingText); } else toast(`Voice output failed: ${m.message}`);
+          if (m.message === 'rate limited') { goFree('Gnani daily limit reached. Switched to the free browser voice.'); speak(speakingText); break; }
+          // Gnani voice failed: say this reply in the browser's voice instead of showing the
+          // error (and don't leave the player waiting for audio); after two failures, all of them
+          console.warn('Gnani TTS:', m.message);
+          if (++ttsFails >= 2) ttsDown = true;
+          if (player?.current === m.id) speak(speakingText, { browser: true }); else player?.finish(m.id);
           break;
-        case 'budget': goFree(); break;
+        case 'budget': goFree('Gnani daily limit reached. Switched to the free browser voice.'); break;
         default:
       }
     };
     ws.onclose = () => {
-      if (!running) return;
+      if (!running || !config.gnani) return; // closed on purpose when switching to the browser voice
       // offline: wait for the connection to come back instead of retrying every second
       if (!navigator.onLine) { window.addEventListener('online', () => { if (running) connect(); }, { once: true }); return; }
       toast('Connection lost, reconnecting…');
@@ -1025,13 +1042,13 @@ function useBrowserListening() {
   if (running && !recog) startBrowserStt();
 }
 
-// Daily credit cap reached (or access lost): carry on with the browser's free voice.
-function goFree() {
+// Daily credit cap reached, or Gnani not reachable at all: carry on with the browser's free voice.
+function goFree(why) {
   if (!config.gnani) return;
   config.gnani = false;
   config.llm = false;
   setBadge();
-  toast('Gnani daily limit reached. Switched to the free browser voice.');
+  toast(why, 8000);
   try { ws?.close(); } catch { /* already closed */ }
   if (running) startBrowserStt();
 }

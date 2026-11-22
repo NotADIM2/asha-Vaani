@@ -41,10 +41,15 @@ export function openStt({ apiKey, languageCode, keyterms = [], model, format, on
     if (isBinary) return;
     try { onMessage(JSON.parse(data.toString())); } catch { /* ignore malformed frame */ }
   });
+  // A refused handshake (401, 429, 5xx) leaves the socket connecting forever unless it is
+  // terminated; terminating fires 'close', so the relay can retry or give up.
+  let refused = false;
   ws.on('unexpected-response', (_req, res) => {
+    refused = true;
     onMessage({ type: 'error', message: `STT handshake failed (${res.statusCode})` });
+    ws.terminate();
   });
-  ws.on('error', (err) => onMessage({ type: 'error', message: `STT: ${err.message}` }));
+  ws.on('error', (err) => { if (!refused) onMessage({ type: 'error', message: `STT: ${err.message}` }); });
   ws.on('close', (code) => onClose?.(code));
   return ws;
 }
@@ -66,7 +71,7 @@ export class TtsPool {
       ws.on('error', () => {}); // a socket error after open must not crash the process
       ws.once('open', () => resolve(ws));
       ws.once('error', fail);
-      ws.once('unexpected-response', (_q, res) => fail(new Error(`TTS handshake failed (${res.statusCode})`)));
+      ws.once('unexpected-response', (_q, res) => { fail(new Error(`TTS handshake failed (${res.statusCode})`)); ws.terminate(); });
     });
   }
 

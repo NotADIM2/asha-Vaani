@@ -104,7 +104,7 @@ function limiter(max, windowMs) {
 }
 const extractLimit = limiter(12, 60_000); // LLM calls per IP per minute
 const connectLimit = limiter(20, 60_000); // new sockets per IP per minute
-const MAX_SOCKETS_PER_IP = 4;
+const MAX_SOCKETS_PER_IP = 8; // judges on one office network share an IP
 const socketsByIp = new Map();
 
 const app = express();
@@ -196,6 +196,10 @@ wss.on('connection', (client, req) => {
   let stt = null;
   let sttReady = false;
   let pending = []; // audio frames buffered while the STT socket opens
+  // Gnani refusing the connection (credits, key, outage) must not be retried on every audio
+  // frame: wait 2, 4, 8 ... up to 30 s between attempts until one opens.
+  let sttFailStreak = 0;
+  let nextSttAt = 0;
   const tts = allowed ? new TtsPool(KEY) : null;
   const cancels = new Map();
 
@@ -213,12 +217,14 @@ wss.on('connection', (client, req) => {
       onOpen: () => {
         if (stt !== sock) return;
         sttReady = true;
+        sttFailStreak = 0;
         for (const f of pending) sock.send(f);
         pending = [];
       },
       onMessage: (m) => { if (stt === sock) send({ ...m, type: `stt_${m.type}` }); },
       onClose: (code) => {
         if (stt !== sock) return;
+        if (!sttReady) { sttFailStreak++; nextSttAt = Date.now() + Math.min(30_000, 1000 * 2 ** sttFailStreak); }
         stt = null;
         sttReady = false;
         send({ type: 'stt_closed', code });
@@ -235,7 +241,7 @@ wss.on('connection', (client, req) => {
         send({ type: 'budget' });
         return;
       }
-      if (!stt) connectStt(); // reopen after the 15-minute cap or idle close
+      if (!stt && Date.now() >= nextSttAt) connectStt(); // reopen after the 15-minute cap or idle close
       if (sttReady) stt.send(data);
       else if (pending.length < 100) pending.push(data);
       return;
@@ -314,6 +320,13 @@ for (const h of hosts) {
     process.exit(1);
   });
   srv.listen(PORT, h, h === hosts[0] ? announce : undefined);
+}
+
+// Render's free plan sleeps after 15 idle minutes and takes about a minute to wake, which a
+// judge would see as a dead page. A request through the public URL every 10 minutes counts
+// as traffic. Render sets RENDER_EXTERNAL_URL; KEEP_AWAKE=0 turns this off.
+if (process.env.RENDER_EXTERNAL_URL && process.env.KEEP_AWAKE !== '0') {
+  setInterval(() => { fetch(`${process.env.RENDER_EXTERNAL_URL}/healthz`).catch(() => {}); }, 10 * 60_000).unref();
 }
 
 function announce() {

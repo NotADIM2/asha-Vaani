@@ -832,6 +832,7 @@ export const SCREEN = {
     sttUnclear: 'The speech service could not make out that audio. Speak a little closer, or test the microphone in Settings.',
     micRate: (k) => `Audio from this microphone: ${k} kHz.`,
     sttFallback: 'Gnani speech recognition is failing right now, so the browser’s own recognition is listening instead. Replies still use the Gnani voice. Reload the page to try Gnani again.',
+    gnaniDown: 'Gnani speech is not reachable right now, so the browser’s own voice and recognition are used instead. Reload the page to try Gnani again.',
     micNarrow: 'This is Bluetooth hands-free (phone-call) quality. If words are missed, the laptop or phone’s own microphone may work better.',
   },
   hi: {
@@ -934,6 +935,7 @@ export const SCREEN = {
     sttUnclear: 'आवाज़ साफ़ समझ नहीं आई। थोड़ा पास से बोलें, या सेटिंग में माइक टेस्ट करें।',
     micRate: (k) => `इस माइक की आवाज़: ${k} kHz।`,
     sttFallback: 'Gnani की आवाज़ पहचान अभी काम नहीं कर रही, इसलिए ब्राउज़र की अपनी पहचान सुन रही है। जवाब Gnani की आवाज़ में ही आएँगे। Gnani दोबारा आज़माने के लिए पेज रीलोड करें।',
+    gnaniDown: 'Gnani की आवाज़ सेवा अभी नहीं मिल रही, इसलिए ब्राउज़र की अपनी आवाज़ और पहचान काम कर रही है। Gnani दोबारा आज़माने के लिए पेज रीलोड करें।',
     micNarrow: 'यह ब्लूटूथ हैंड्स-फ़्री (फ़ोन कॉल जैसी) क्वालिटी है। शब्द छूटें तो लैपटॉप या फ़ोन का अपना माइक बेहतर रहेगा।',
   },
 };
