@@ -201,7 +201,7 @@ Same flow in plain text:
 | Baseline rule | Implementation |
 |---|---|
 | **AI disclosure** in the first turn, in her language | Every greeting starts "मैं … एक ए आई सहायक हूँ, इंसान नहीं" / "I am … an A I assistant, not a human", and the same in each of the ten languages. Covered by a test. |
-| **Synthetic or consented data only** | The register is invented (`public/js/nlu/registry.js`). The start screen carries a "Prototype, demo data only" notice saying not to use real patients. |
+| **Synthetic or consented data only** | The register is invented (`public/js/nlu/registry.js`). Settings → About says to use demo people only and that it is not an official health record. |
 | **DPDP: encrypted at rest, deleted after judging** | Records are encrypted on the phone with AES-256-GCM (non-extractable WebCrypto key) and deleted automatically after 1 / 7 / 30 days, plus a "Delete all" button. The server stores and logs **no** audio or transcripts. |
 | **Health: no diagnosis, treatment or dosage** | Every spoken sentence comes from fixed templates (`public/js/i18n.js`); nothing is generated freely. Medicine and treatment questions get a fixed refusal. Danger signs follow a fixed, cited list (see [DANGER_SIGNS.md](DANGER_SIGNS.md), also listed in Settings in her language) and the only action is "refer to PHC". The LLM can only return JSON fields, which are checked against the transcript and can only fill empty fields or add flags. |
 | **Secrets** | The API key is read from `.env` (git-ignored) on the server and never reaches the browser. |
