@@ -721,10 +721,8 @@ export const UI = {
 // Hindi is translated; the other languages fall back to English until they are reviewed.
 export const SCREEN = {
   en: {
-    tagline: 'Voice visit notes · prototype',
+    tagline: 'Voice visit notes',
     online: 'Online', offline: 'Offline',
-    protoTitle: 'Prototype, demo data only',
-    protoBody: 'Built for a hackathon. It is not an official health record and does not replace the MCP card, the RCH register or ANMOL. Use the invented demo people only, never real patients.',
     startTitle: 'Start a visit',
     ancBtn: 'Pregnancy visit', ancSub: 'ANC: weight, BP, Hb, Td vaccine, next date',
     hbncBtn: 'Newborn visit', hbncSub: 'HBNC: baby weight, temperature, feeding, next home visit',
@@ -791,6 +789,7 @@ export const SCREEN = {
       'There is no server sync and no link to RCH, ANMOL or any government system.',
       'The server keeps no audio or transcripts. Speech goes to Gnani only to be transcribed and spoken.',
       'Voices are standard Gnani voices. No voice cloning.',
+      'Demo people only. This is not an official health record and does not replace the MCP card, the RCH register or ANMOL.',
     ],
     aboutSub: 'Privacy, encryption and voice processing.',
     voiceVisit: 'Voice visit', segAnc: 'Pregnancy', segHbnc: 'Newborn', segOther: 'Other', segLabel: 'Visit type', hfShort: 'Hands-free',
@@ -826,10 +825,8 @@ export const SCREEN = {
     micNarrow: 'This is Bluetooth hands-free (phone-call) quality. If words are missed, the laptop or phone’s own microphone may work better.',
   },
   hi: {
-    tagline: 'आवाज़ से विज़िट नोट्स · प्रोटोटाइप',
+    tagline: 'आवाज़ से विज़िट नोट्स',
     online: 'ऑनलाइन', offline: 'ऑफ़लाइन',
-    protoTitle: 'प्रोटोटाइप, सिर्फ़ डेमो डेटा',
-    protoBody: 'हैकाथॉन के लिए बनाया गया। यह सरकारी स्वास्थ्य रिकॉर्ड नहीं है और MCP कार्ड, RCH रजिस्टर या ANMOL की जगह नहीं लेता। सिर्फ़ डेमो वाले काल्पनिक लोग इस्तेमाल करें, असली मरीज़ नहीं।',
     startTitle: 'विज़िट शुरू करें',
     ancBtn: 'गर्भवती विज़िट', ancSub: 'ANC: वज़न, BP, Hb, Td टीका, अगली तारीख',
     hbncBtn: 'नवजात विज़िट', hbncSub: 'HBNC: बच्चे का वज़न, तापमान, दूध पीना, अगली विज़िट',
@@ -897,6 +894,7 @@ export const SCREEN = {
       'कोई सर्वर सिंक नहीं, और RCH, ANMOL या किसी सरकारी सिस्टम से कोई जुड़ाव नहीं।',
       'सर्वर कोई आवाज़ या ट्रांसक्रिप्ट नहीं रखता। आवाज़ सिर्फ़ लिखने और बोलने के लिए Gnani को जाती है।',
       'आवाज़ें Gnani की सामान्य आवाज़ें हैं। किसी की आवाज़ की नकल (वॉइस क्लोनिंग) नहीं।',
+      'सिर्फ़ डेमो वाले लोग। यह सरकारी स्वास्थ्य रिकॉर्ड नहीं है और MCP कार्ड, RCH रजिस्टर या ANMOL की जगह नहीं लेता।',
     ],
     voiceVisit: 'आवाज़ से विज़िट', segAnc: 'गर्भवती', segHbnc: 'नवजात', segOther: 'दूसरी', segLabel: 'विज़िट का प्रकार', hfShort: 'हैंड्स-फ़्री',
     talkHint: 'एक बार दबाएँ, फिर अपने शब्दों में बताइए। AI एक-एक करके सवाल पूछेगी।',

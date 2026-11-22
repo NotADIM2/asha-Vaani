@@ -1,5 +1,5 @@
 // Offline shell: the app opens without network; speech needs a connection.
-const CACHE = 'asha-vaani-v18';
+const CACHE = 'asha-vaani-v19';
 const ASSETS = [
   '/', '/index.html', '/styles.css', '/manifest.webmanifest', '/assets/icon.svg',
   '/js/app.js', '/js/agent.js', '/js/audio.js', '/js/pcm-worklet.js', '/js/store.js', '/js/i18n.js', '/js/echo.js',
